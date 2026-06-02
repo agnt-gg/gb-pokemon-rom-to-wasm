@@ -570,12 +570,7 @@ async function boot() {
   function applyPlaybackSpeed(v: number) {
     PLAYBACK_SPEED = validSpeed(v);
     localStorage.setItem(SPEED_STORAGE_KEY, String(PLAYBACK_SPEED));
-    // Gameplay/PPU run at PLAYBACK_SPEED, but APU stays near 1x so music/SFX pitch and tempo
-    // do not speed up when we boost perceived walking speed.
-    // Gameplay speed automatically sets inverse audio speed: 1x=>1x, 2x=>0.5x, 4x=>0.25x.
-    machine.audioCycleScale = 1 / PLAYBACK_SPEED;
-    audio.setPlaybackSpeed(1 / PLAYBACK_SPEED);
-    if (speedStatus) speedStatus.textContent = PLAYBACK_SPEED + "x gameplay · audio " + (1 / PLAYBACK_SPEED) + "x";
+    if (speedStatus) speedStatus.textContent = PLAYBACK_SPEED + "x gameplay";
     speedButtons.forEach((b) => {
       const on = Number(b.dataset.speed) === PLAYBACK_SPEED;
       b.setAttribute("aria-pressed", String(on));

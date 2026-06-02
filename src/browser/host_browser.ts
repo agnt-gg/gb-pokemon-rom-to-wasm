@@ -25,9 +25,6 @@ export class BrowserMachine {
   exports: any;
   frames = 0;
   private tickCb: ((c: number) => void) | null = null;
-  /** Scale APU time relative to CPU/PPU time. Used when frontend playback speed is boosted but
-   * audio should remain normal-pitch/normal-tempo. 1.0 = lockstep, 0.5 = half audio cycles. */
-  audioCycleScale = 1.0;
 
   private constructor(mmu: MMU) {
     this.mmu = mmu;
@@ -94,12 +91,7 @@ export class BrowserMachine {
     m.exports = exportsRef;
 
     // PPU/timer/APU step in lockstep with cycles
-    m.tickCb = (c) => {
-      m.ppu.step(c);
-      m.timer.step(c);
-      const ac = Math.max(0, Math.round(c * m.audioCycleScale));
-      if (ac > 0) m.apu.step(ac);
-    };
+    m.tickCb = (c) => { m.ppu.step(c); m.timer.step(c); m.apu.step(c); };
 
     // Seed post-boot DMG state (skips needing the copyrighted boot ROM).
     exportsRef.set_A(0x01); exportsRef.set_F(0xb0);
