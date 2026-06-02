@@ -182,11 +182,15 @@ export class BrowserMachine {
       if (!inFixedRom) {
         this.syncWasmToCpu();
         let inner = 0;
-        while (((cpu.pc & 0xffff) >= 0x4000) && inner++ < 16384 && !cpu.halted) {
+        while (((cpu.pc & 0xffff) >= 0x4000) && inner++ < 16384 && !cpu.halted && (cpu.cycles - start) < target) {
           const b = cpu.cycles;
           cpu.step();
           if (this.tickCb) this.tickCb(cpu.cycles - b);
-          // re-check interrupts mid-stretch so VBlank handlers in RAM fire promptly
+          // Crucial for title/menu/input/audio progression: banked-code fallback can spend long
+          // stretches in 0x4000+, so service interrupts inside the stretch rather than waiting
+          // until PC returns to fixed ROM. Otherwise VBlank/Joypad/Timer work can lag or starve.
+          const ic2 = cpu.serviceInterrupts();
+          if (ic2 > 0 && this.tickCb) this.tickCb(ic2);
           if ((cpu.pc & 0xffff) < 0x4000) break;
         }
         this.syncCpuToWasm();
@@ -200,7 +204,9 @@ export class BrowserMachine {
       } else if (next === UNKNOWN_BLOCK) {
         // interpret one instruction (RAM code / indirect / not-yet-lifted)
         this.syncWasmToCpu();
+        const b = cpu.cycles;
         cpu.step();
+        if (this.tickCb) this.tickCb(cpu.cycles - b);
         this.syncCpuToWasm();
       }
       // else: a recompiled block ran; it set PC + called $tick internally.
