@@ -561,10 +561,23 @@ async function boot() {
     tex.needsUpdate = true;
   }
 
+  let emuAccum = 0;
+  const EMU_FRAME_MS = 1000 / 59.7275;
+  const MAX_CATCHUP_FRAMES = 4;
+
   function loop(now: number) {
-    const dt = now - last; last = now;
-    machine.runFrame();
-    renderGbToCanvas();
+    const dt = Math.min(100, now - last); last = now;
+    emuAccum += dt;
+    let ran = 0;
+    // Real-time pacing: Three.js can render below 60 FPS on some machines. Run catch-up
+    // emulation frames, then render the latest framebuffer once so gameplay speed remains normal.
+    while (emuAccum >= EMU_FRAME_MS && ran < MAX_CATCHUP_FRAMES) {
+      machine.runFrame();
+      emuAccum -= EMU_FRAME_MS;
+      ran++;
+    }
+    if (ran === MAX_CATCHUP_FRAMES && emuAccum >= EMU_FRAME_MS) emuAccum = 0;
+    if (ran > 0) renderGbToCanvas();
     const a = machine.drainAudio();
     if (a.left.length) audio.push(a.left, a.right);
 
@@ -597,7 +610,7 @@ async function boot() {
 
     frameCount++; fpsAccum += dt;
     if (frameCount % 20 === 0) {
-      fpsEl.textContent = (1000 / (fpsAccum / 20)).toFixed(0) + " fps";
+      fpsEl.textContent = (1000 / (fpsAccum / 20)).toFixed(0) + " fps · " + Math.max(1, ran) + "x emu";
       fpsAccum = 0;
     }
     saver.tick();

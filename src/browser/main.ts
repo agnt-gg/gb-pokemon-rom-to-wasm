@@ -210,12 +210,28 @@ async function boot() {
   let last = performance.now();
   let frameCount = 0;
   let fpsAccum = 0;
+  let emuAccum = 0;
+  const EMU_FRAME_MS = 1000 / 59.7275;
+  const MAX_CATCHUP_FRAMES = 4;
 
   let dead = false;
   function loop(now: number) {
     if (dead) return;
+    const dt = Math.min(100, now - last); last = now;
+    fpsAccum += dt;
+    emuAccum += dt;
+    let ran = 0;
     try {
-      machine.runFrame();
+      // Real-time pacing: if rendering/rAF drops below 60Hz, run multiple emulated
+      // frames before drawing once. Without this, gameplay speed is tied to visual FPS.
+      while (emuAccum >= EMU_FRAME_MS && ran < MAX_CATCHUP_FRAMES) {
+        machine.runFrame();
+        emuAccum -= EMU_FRAME_MS;
+        ran++;
+        frameCount++;
+      }
+      if (ran === MAX_CATCHUP_FRAMES && emuAccum >= EMU_FRAME_MS) emuAccum = 0;
+      if (ran === 0) { requestAnimationFrame(loop); return; }
     } catch (err) {
       dead = true;
       statusEl.textContent = "frame error: " + (err as Error).message;
@@ -224,21 +240,17 @@ async function boot() {
     }
     img.data.set(machine.framebuffer);
     ctx.putImageData(img, 0, 0);
-    // Feed this frame's audio to Web Audio (no-op until the user gesture starts it).
     const a = machine.drainAudio();
     if (a.left.length) audio.push(a.left, a.right);
-    saver.tick(); // debounced battery autosave when SRAM changes
+    saver.tick();
 
-    frameCount++;
-    const dt = now - last; last = now;
-    fpsAccum += dt;
-    if (frameCount % 15 === 0) {
+    if (frameCount % 15 < ran) {
       const stall = (machine as any).lastStall;
-      fpsEl.textContent = (1000 / (fpsAccum / 15)).toFixed(0) + " fps";
-      statusEl.textContent = stall ? ("running ▶ (" + stall + ")") : ("running ▶ frame " + frameCount);
+      fpsEl.textContent = (1000 / (fpsAccum / 15)).toFixed(0) + " fps · " + ran + "x emu";
+      statusEl.textContent = stall ? ("running ✓ (" + stall + ")") : ("running ✓ frame " + frameCount);
       fpsAccum = 0;
     }
-    if (frameCount === 1) console.log("[gb] first frame rendered");
+    if (frameCount <= ran) console.log("[gb] first frame rendered");
     requestAnimationFrame(loop);
   }
   console.log("[gb] starting frame loop");
