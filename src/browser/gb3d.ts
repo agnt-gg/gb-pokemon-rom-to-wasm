@@ -562,9 +562,31 @@ async function boot() {
     tex.needsUpdate = true;
   }
 
+  const SPEED_STORAGE_KEY = "gb-3d-playback-speed";
+  const validSpeed = (v: number) => ([1, 2, 4].includes(v) ? v : 2);
+  let PLAYBACK_SPEED = validSpeed(Number(localStorage.getItem(SPEED_STORAGE_KEY) || "2"));
+  const speedStatus = document.getElementById("speedstatus");
+  const speedButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-speed]"));
+  function applyPlaybackSpeed(v: number) {
+    PLAYBACK_SPEED = validSpeed(v);
+    localStorage.setItem(SPEED_STORAGE_KEY, String(PLAYBACK_SPEED));
+    // Gameplay/PPU run at PLAYBACK_SPEED, but APU stays near 1x so music/SFX pitch and tempo
+    // do not speed up when we boost perceived walking speed.
+    machine.audioCycleScale = 1 / PLAYBACK_SPEED;
+    if (speedStatus) speedStatus.textContent = PLAYBACK_SPEED + "x gameplay · 1x audio";
+    speedButtons.forEach((b) => {
+      const on = Number(b.dataset.speed) === PLAYBACK_SPEED;
+      b.setAttribute("aria-pressed", String(on));
+      b.style.borderColor = on ? "var(--accent2)" : "var(--border)";
+      b.style.color = on ? "var(--accent2)" : "var(--ink)";
+    });
+  }
+  speedButtons.forEach((b) => b.addEventListener("click", () => applyPlaybackSpeed(Number(b.dataset.speed))));
+  applyPlaybackSpeed(PLAYBACK_SPEED);
+
   function loop(now: number) {
     const rawDt = now - last;
-    const dt = frameCount === 0 ? (1000 / 59.7275) : Math.min(50, Math.max(1, rawDt));
+    const dt = (frameCount === 0 ? (1000 / 59.7275) : Math.min(50, Math.max(1, rawDt))) * PLAYBACK_SPEED;
     last = now;
     // Smooth real-time pacing: run elapsed Game Boy cycles, then render once. This keeps
     // game time correct if rAF is 45-55Hz without hiding whole skipped frames.
@@ -602,7 +624,7 @@ async function boot() {
 
     frameCount++; fpsAccum += dt;
     if (frameCount % 20 === 0) {
-      fpsEl.textContent = (1000 / (fpsAccum / 20)).toFixed(0) + " fps · realtime cycles";
+      fpsEl.textContent = (1000 / (fpsAccum / 20)).toFixed(0) + " fps · realtime cycles · " + PLAYBACK_SPEED.toFixed(1) + "x";
       fpsAccum = 0;
     }
     saver.tick();

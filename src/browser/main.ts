@@ -211,11 +211,33 @@ async function boot() {
   let frameCount = 0;
   let fpsAccum = 0;
 
+  const SPEED_STORAGE_KEY = "gb-playback-speed";
+  const validSpeed = (v: number) => ([1, 2, 4].includes(v) ? v : 2);
+  let PLAYBACK_SPEED = validSpeed(Number(localStorage.getItem(SPEED_STORAGE_KEY) || "2"));
+  const speedStatus = document.getElementById("speedstatus");
+  const speedButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-speed]"));
+  function applyPlaybackSpeed(v: number) {
+    PLAYBACK_SPEED = validSpeed(v);
+    localStorage.setItem(SPEED_STORAGE_KEY, String(PLAYBACK_SPEED));
+    // Gameplay/PPU run at PLAYBACK_SPEED, but APU stays near 1x so music/SFX pitch and tempo
+    // do not speed up when we boost perceived walking speed.
+    machine.audioCycleScale = 1 / PLAYBACK_SPEED;
+    if (speedStatus) speedStatus.textContent = PLAYBACK_SPEED + "x gameplay · 1x audio";
+    speedButtons.forEach((b) => {
+      const on = Number(b.dataset.speed) === PLAYBACK_SPEED;
+      b.setAttribute("aria-pressed", String(on));
+      b.style.borderColor = on ? "var(--accent2)" : "var(--border)";
+      b.style.color = on ? "var(--accent2)" : "var(--ink)";
+    });
+  }
+  speedButtons.forEach((b) => b.addEventListener("click", () => applyPlaybackSpeed(Number(b.dataset.speed))));
+  applyPlaybackSpeed(PLAYBACK_SPEED);
+
   let dead = false;
   function loop(now: number) {
     if (dead) return;
     const rawDt = now - last;
-    const dt = frameCount === 0 ? (1000 / 59.7275) : Math.min(50, Math.max(1, rawDt));
+    const dt = (frameCount === 0 ? (1000 / 59.7275) : Math.min(50, Math.max(1, rawDt))) * PLAYBACK_SPEED;
     last = now;
     try {
       // Smooth real-time pacing: advance Game Boy time by elapsed wall-clock milliseconds,
@@ -238,7 +260,7 @@ async function boot() {
     fpsAccum += dt;
     if (frameCount % 15 === 0) {
       const stall = (machine as any).lastStall;
-      fpsEl.textContent = (1000 / (fpsAccum / 15)).toFixed(0) + " fps · realtime cycles";
+      fpsEl.textContent = (1000 / (fpsAccum / 15)).toFixed(0) + " fps · realtime cycles · " + PLAYBACK_SPEED.toFixed(1) + "x";
       statusEl.textContent = stall ? ("running ✓ (" + stall + ")") : ("running ✓ frame " + frameCount);
       fpsAccum = 0;
     }
