@@ -213,16 +213,21 @@ async function boot() {
 
   const SPEED_STORAGE_KEY = "gb-playback-speed";
   const validSpeed = (v: number) => ([1, 2, 4].includes(v) ? v : 2);
+  const validAudioSpeed = (v: number) => ([0.5, 0.75, 1].includes(v) ? v : 1);
+  let AUDIO_SPEED = validAudioSpeed(Number(localStorage.getItem("gb-audio-speed") || "1"));
   let PLAYBACK_SPEED = validSpeed(Number(localStorage.getItem(SPEED_STORAGE_KEY) || "2"));
   const speedStatus = document.getElementById("speedstatus");
+  const audioStatus = document.getElementById("audiostatus");
   const speedButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-speed]"));
+  const audioSpeedButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-audio-speed]"));
   function applyPlaybackSpeed(v: number) {
     PLAYBACK_SPEED = validSpeed(v);
     localStorage.setItem(SPEED_STORAGE_KEY, String(PLAYBACK_SPEED));
     // Gameplay/PPU run at PLAYBACK_SPEED, but APU stays near 1x so music/SFX pitch and tempo
     // do not speed up when we boost perceived walking speed.
-    machine.audioCycleScale = 1 / PLAYBACK_SPEED;
-    if (speedStatus) speedStatus.textContent = PLAYBACK_SPEED + "x gameplay · 1x audio";
+    machine.audioCycleScale = AUDIO_SPEED / PLAYBACK_SPEED;
+    if (speedStatus) speedStatus.textContent = PLAYBACK_SPEED + "x gameplay";
+    if (audioStatus) audioStatus.textContent = AUDIO_SPEED + "x audio";
     speedButtons.forEach((b) => {
       const on = Number(b.dataset.speed) === PLAYBACK_SPEED;
       b.setAttribute("aria-pressed", String(on));
@@ -230,8 +235,23 @@ async function boot() {
       b.style.color = on ? "var(--accent2)" : "var(--ink)";
     });
   }
+  function applyAudioSpeed(v: number) {
+    AUDIO_SPEED = validAudioSpeed(v);
+    localStorage.setItem("gb-audio-speed", String(AUDIO_SPEED));
+    machine.audioCycleScale = AUDIO_SPEED / PLAYBACK_SPEED;
+    if (audioStatus) audioStatus.textContent = AUDIO_SPEED + "x audio";
+    if (speedStatus) speedStatus.textContent = PLAYBACK_SPEED + "x gameplay";
+    audioSpeedButtons.forEach((b) => {
+      const on = Number(b.dataset.audioSpeed) === AUDIO_SPEED;
+      b.setAttribute("aria-pressed", String(on));
+      b.style.borderColor = on ? "var(--accent2)" : "var(--border)";
+      b.style.color = on ? "var(--accent2)" : "var(--ink)";
+    });
+  }
   speedButtons.forEach((b) => b.addEventListener("click", () => applyPlaybackSpeed(Number(b.dataset.speed))));
+  audioSpeedButtons.forEach((b) => b.addEventListener("click", () => applyAudioSpeed(Number(b.dataset.audioSpeed))));
   applyPlaybackSpeed(PLAYBACK_SPEED);
+  applyAudioSpeed(AUDIO_SPEED);
 
   let dead = false;
   function loop(now: number) {
