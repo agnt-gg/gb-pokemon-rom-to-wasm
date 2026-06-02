@@ -35,6 +35,12 @@ import { hex4 } from "./decoder.ts";
 
 export const SENTINEL_HALT = 0x10000; // out-of-range PC signals halt to the host loop
 
+// Conservative correctness mode for the browser demo: generated WASM still owns basic-block
+// dispatch/timing/control-flow, but ordinary instruction semantics are delegated to the verified
+// interpreter import. This keeps the game running through WASM blocks while avoiding partially
+// validated native opcode lifts. Flip this off only when each native opcode family passes lockstep.
+const FORCE_INTERP_NON_TERMINATORS = true;
+
 /** Emit a label name for a block at a given address. */
 export function blockName(addr: number): string {
   return `blk_${hex4(addr)}`;
@@ -95,6 +101,11 @@ export function liftInstr(e: Emit, ins: Instr): boolean {
   e.push(`    ;; ${hex4(ins.addr)}: ${ins.text}`);
   // advance cycle budget for this instruction
   e.push(`    (call $tick (i32.const ${ins.cycles}))`);
+
+  if (FORCE_INTERP_NON_TERMINATORS && !ins.isTerminator) {
+    emitInterp(e, ins);
+    return false;
+  }
 
   switch (ins.mnemonic) {
     case "NOP":
@@ -159,7 +170,7 @@ export function liftInstr(e: Emit, ins: Instr): boolean {
         e.push(`    (global.set $PC (i32.const ${tgt}))`);
         e.push(`    (return (i32.const ${tgt}))`);
       } else {
-        emitConditionalReturn(e, (cond as any).cc, tgt, (ins.addr + ins.length) & 0xffff);
+        emitConditionalReturn(e, (cond as any).cc, tgt, (ins.addr + ins.length) & 0xffff, ins);
       }
       return true;
     }
@@ -172,7 +183,7 @@ export function liftInstr(e: Emit, ins: Instr): boolean {
         e.push(`    (global.set $PC (i32.const ${tgt}))`);
         e.push(`    (return (i32.const ${tgt}))`);
       } else {
-        emitConditionalReturn(e, (cond as any).cc, tgt, next);
+        emitConditionalReturn(e, (cond as any).cc, tgt, next, ins);
       }
       return true;
     }
@@ -186,8 +197,9 @@ export function liftInstr(e: Emit, ins: Instr): boolean {
         e.push(`    (global.set $PC (i32.const ${tgt}))`);
         e.push(`    (return (i32.const ${tgt}))`);
       } else {
+        const extra = Math.max(0, (ins.cyclesBranch ?? ins.cycles) - ins.cycles);
         e.push(`    (if ${condTest((cond as any).cc)}`);
-        e.push(`      (then (call $push16 (i32.const ${next})) (global.set $PC (i32.const ${tgt})) (return (i32.const ${tgt}))))`);
+        e.push(`      (then ${extra ? `(call $tick (i32.const ${extra})) ` : ""}(call $push16 (i32.const ${next})) (global.set $PC (i32.const ${tgt})) (return (i32.const ${tgt}))))`);
         e.push(`    (global.set $PC (i32.const ${next}))`);
         e.push(`    (return (i32.const ${next}))`);
       }
@@ -207,8 +219,9 @@ export function liftInstr(e: Emit, ins: Instr): boolean {
         e.push(`    (global.set $PC (call $pop16))`);
         e.push(`    (return (global.get $PC))`);
       } else {
+        const extra = Math.max(0, (ins.cyclesBranch ?? ins.cycles) - ins.cycles);
         e.push(`    (if ${condTest((cond as any).cc)}`);
-        e.push(`      (then (global.set $PC (call $pop16)) (return (global.get $PC))))`);
+        e.push(`      (then ${extra ? `(call $tick (i32.const ${extra})) ` : ""}(global.set $PC (call $pop16)) (return (global.get $PC))))`);
         const next = (ins.addr + ins.length) & 0xffff;
         e.push(`    (global.set $PC (i32.const ${next}))`);
         e.push(`    (return (i32.const ${next}))`);
@@ -243,9 +256,10 @@ export function liftInstr(e: Emit, ins: Instr): boolean {
 }
 
 /** Conditional JP/JR: if taken return target, else return fallthrough (both set PC). */
-function emitConditionalReturn(e: Emit, cc: string, tgt: number, next: number): void {
+function emitConditionalReturn(e: Emit, cc: string, tgt: number, next: number, ins: Instr): void {
+  const extra = Math.max(0, (ins.cyclesBranch ?? ins.cycles) - ins.cycles);
   e.push(`    (if ${condTest(cc)}`);
-  e.push(`      (then (global.set $PC (i32.const ${tgt})) (return (i32.const ${tgt}))))`);
+  e.push(`      (then ${extra ? `(call $tick (i32.const ${extra})) ` : ""}(global.set $PC (i32.const ${tgt})) (return (i32.const ${tgt}))))`);
   e.push(`    (global.set $PC (i32.const ${next}))`);
   e.push(`    (return (i32.const ${next}))`);
 }

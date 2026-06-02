@@ -76,19 +76,17 @@ export async function instantiateRecomp(
       rb: (addr: number) => mmu.read(addr & 0xffff),
       wb: (addr: number, val: number) => mmu.write(addr & 0xffff, val & 0xff),
       tick: (_cycles: number) => { cpu.cycles += _cycles; if (tickCb) tickCb(_cycles); },
-      // Run exactly one instruction at `addr` through the reference interpreter,
-      // keeping WASM globals authoritative via sync.
+      // Run exactly one fallback instruction at `addr` through the reference interpreter,
+      // keeping WASM globals authoritative via sync. The lifter already emitted this
+      // instruction's base $tick before $interp, so this must not add cycles again.
       interp: (addr: number) => {
         wasmToCpu();
-        // The block already advanced PC past this instruction's bytes; the interpreter
-        // re-decodes at `addr` and executes, but must NOT re-advance PC for non-control ops.
         const b0 = mmu.read(addr), b1 = mmu.read((addr + 1) & 0xffff), b2 = mmu.read((addr + 2) & 0xffff);
         const ins = decode(new Uint8Array([b0, b1, b2]), 0, addr);
-        // Save PC, let exec run (control ops handle PC themselves; data ops leave it).
-        const savedPc = cpu.pc;
+        const enableImeAfter = (cpu as any).imeScheduled;
+        cpu.pc = (addr + ins.length) & 0xffff;
         cpu.exec(ins);
-        // For non-terminators, the block manages PC; restore so we don't double-advance.
-        if (!ins.isTerminator) cpu.pc = savedPc;
+        if (enableImeAfter) { (cpu as any).ime = true; (cpu as any).imeScheduled = false; }
         cpuToWasm();
       },
       dispatch: (pc: number) => pc, // host loop handles dispatch; identity here

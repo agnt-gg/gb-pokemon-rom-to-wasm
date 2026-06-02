@@ -66,12 +66,16 @@ export class BrowserMachine {
         wb: (addr: number, val: number) => mmu.write(addr & 0xffff, val & 0xff),
         tick: (c: number) => { cpu.cycles += c; if (m.tickCb) m.tickCb(c); },
         interp: (addr: number) => {
+          // Execute one fallback instruction with CPU.step-like PC/EI semantics. Important:
+          // the lifter already emitted the instruction's base `$tick` before calling `$interp`,
+          // so DO NOT add cycles here or PPU/timer/cpu time double-counts fallback ops.
           wasmToCpu();
           const b0 = mmu.read(addr), b1 = mmu.read((addr + 1) & 0xffff), b2 = mmu.read((addr + 2) & 0xffff);
           const ins = decode(new Uint8Array([b0, b1, b2]), 0, addr);
-          const savedPc = cpu.pc;
+          const enableImeAfter = (cpu as any).imeScheduled;
+          cpu.pc = (addr + ins.length) & 0xffff;
           cpu.exec(ins);
-          if (!ins.isTerminator) cpu.pc = savedPc;
+          if (enableImeAfter) { (cpu as any).ime = true; (cpu as any).imeScheduled = false; }
           cpuToWasm();
         },
         dispatch: (pc: number) => pc,
@@ -108,7 +112,7 @@ export class BrowserMachine {
   // Pokemon Red correctly. The recompiled WASM fast-path is a progressive accelerator that is
   // still being validated block-by-block against the oracle, so it defaults OFF. Flip to false
   // to opt into the (faster but not-yet-fully-verified) recompiled blocks for fixed ROM bank 0.
-  interpreterOnly = true;
+  interpreterOnly = false;
   private syncWasmToCpu() {
     const ex = this.exports, cpu = this.cpu;
     cpu.a = ex.get_A(); cpu.f = ex.get_F() & 0xf0; cpu.b = ex.get_B(); cpu.c = ex.get_C();
