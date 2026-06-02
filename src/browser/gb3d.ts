@@ -563,8 +563,12 @@ async function boot() {
   }
 
   let emuAccum = 0;
-  const EMU_FRAME_MS = 1000 / 59.7275;
-  const MAX_CATCHUP_FRAMES = 4;
+  // WASM-block mode can feel slightly more sluggish than the pure interpreter because control
+  // returns at block/banked-fallback boundaries. Keep CPU semantics intact and calibrate pacing
+  // perceptually at the frontend layer.
+  const EMU_SPEED = 1.12;
+  const EMU_FRAME_MS = 1000 / (59.7275 * EMU_SPEED);
+  const MAX_CATCHUP_FRAMES = 5;
 
   function loop(now: number) {
     const dt = Math.min(100, now - last); last = now;
@@ -611,7 +615,7 @@ async function boot() {
 
     frameCount++; fpsAccum += dt;
     if (frameCount % 20 === 0) {
-      fpsEl.textContent = (1000 / (fpsAccum / 20)).toFixed(0) + " fps · " + Math.max(1, ran) + "x emu";
+      fpsEl.textContent = (1000 / (fpsAccum / 20)).toFixed(0) + " fps · " + Math.max(1, ran) + "x emu · " + EMU_SPEED.toFixed(2) + "x speed";
       fpsAccum = 0;
     }
     saver.tick();

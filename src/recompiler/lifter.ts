@@ -125,30 +125,39 @@ export function liftInstr(e: Emit, ins: Instr): boolean {
     return false;
   }
 
+  const irqAfter = () => {
+    // no-op hook placeholder; interrupt service happens at host dispatch/banked fallback boundaries
+  };
+
   switch (ins.mnemonic) {
     case "NOP":
+      irqAfter();
       return false;
 
     case "XOR": {
       // common idiom; native lift: A ^= src; flags Z000
       e.push(`    (global.set $A (i32.and (i32.xor (global.get $A) ${readExpr(ops[ops.length - 1]!)}) (i32.const 0xff)))`);
       e.push(`    (call $setflags_z (global.get $A))`);
+      irqAfter();
       return false;
     }
     case "AND": {
       e.push(`    (global.set $A (i32.and (global.get $A) ${readExpr(ops[ops.length - 1]!)}) )`);
       e.push(`    (global.set $A (i32.and (global.get $A) (i32.const 0xff)))`);
       e.push(`    (global.set $F (i32.or (select (i32.const 0x80) (i32.const 0x00) (i32.eqz (global.get $A))) (i32.const 0x20)))`);
+      irqAfter();
       return false;
     }
     case "OR": {
       e.push(`    (global.set $A (i32.and (i32.or (global.get $A) ${readExpr(ops[ops.length - 1]!)}) (i32.const 0xff)))`);
       e.push(`    (call $setflags_z (global.get $A))`);
+      irqAfter();
       return false;
     }
     case "CP": {
       const src = readExpr(ops[ops.length - 1]!);
       e.push(`    (global.set $F (i32.or (i32.or (select (i32.const 0x80) (i32.const 0x00) (i32.eq (i32.and (i32.sub (global.get $A) ${src}) (i32.const 0xff)) (i32.const 0))) (i32.const 0x40)) (i32.or (select (i32.const 0x20) (i32.const 0x00) (i32.lt_u (i32.and (global.get $A) (i32.const 0x0f)) (i32.and ${src} (i32.const 0x0f)))) (select (i32.const 0x10) (i32.const 0x00) (i32.lt_u (global.get $A) ${src})))))`);
+      irqAfter();
       return false;
     }
     case "INC": {
@@ -156,6 +165,7 @@ export function liftInstr(e: Emit, ins: Instr): boolean {
       if (dst.kind !== "reg8") { emitInterp(e, ins); return false; }
       e.push(`    (global.set $F (i32.or (i32.or (select (i32.const 0x80) (i32.const 0x00) (i32.eq (i32.and (i32.add (global.get $${dst.reg}) (i32.const 1)) (i32.const 0xff)) (i32.const 0))) (select (i32.const 0x20) (i32.const 0x00) (i32.eq (i32.and (global.get $${dst.reg}) (i32.const 0x0f)) (i32.const 0x0f)))) (i32.and (global.get $F) (i32.const 0x10))))`);
       e.push(`    (global.set $${dst.reg} (i32.and (i32.add (global.get $${dst.reg}) (i32.const 1)) (i32.const 0xff)))`);
+      irqAfter();
       return false;
     }
     case "DEC": {
@@ -163,18 +173,21 @@ export function liftInstr(e: Emit, ins: Instr): boolean {
       if (dst.kind !== "reg8") { emitInterp(e, ins); return false; }
       e.push(`    (global.set $F (i32.or (i32.or (i32.or (select (i32.const 0x80) (i32.const 0x00) (i32.eq (i32.and (i32.sub (global.get $${dst.reg}) (i32.const 1)) (i32.const 0xff)) (i32.const 0))) (i32.const 0x40)) (select (i32.const 0x20) (i32.const 0x00) (i32.eq (i32.and (global.get $${dst.reg}) (i32.const 0x0f)) (i32.const 0)))) (i32.and (global.get $F) (i32.const 0x10))))`);
       e.push(`    (global.set $${dst.reg} (i32.and (i32.sub (global.get $${dst.reg}) (i32.const 1)) (i32.const 0xff)))`);
+      irqAfter();
       return false;
     }
     case "ADD": {
       const src = readExpr(ops[ops.length - 1]!);
       e.push(`    (global.set $F (i32.or (i32.or (select (i32.const 0x80) (i32.const 0x00) (i32.eq (i32.and (i32.add (global.get $A) ${src}) (i32.const 0xff)) (i32.const 0))) (select (i32.const 0x20) (i32.const 0x00) (i32.gt_u (i32.add (i32.and (global.get $A) (i32.const 0x0f)) (i32.and ${src} (i32.const 0x0f))) (i32.const 0x0f)))) (select (i32.const 0x10) (i32.const 0x00) (i32.gt_u (i32.add (global.get $A) ${src}) (i32.const 0xff)))))`);
       e.push(`    (global.set $A (i32.and (i32.add (global.get $A) ${src}) (i32.const 0xff)))`);
+      irqAfter();
       return false;
     }
     case "SUB": {
       const src = readExpr(ops[ops.length - 1]!);
       e.push(`    (global.set $F (i32.or (i32.or (select (i32.const 0x80) (i32.const 0x00) (i32.eq (i32.and (i32.sub (global.get $A) ${src}) (i32.const 0xff)) (i32.const 0))) (i32.const 0x40)) (i32.or (select (i32.const 0x20) (i32.const 0x00) (i32.lt_u (i32.and (global.get $A) (i32.const 0x0f)) (i32.and ${src} (i32.const 0x0f)))) (select (i32.const 0x10) (i32.const 0x00) (i32.lt_u (global.get $A) ${src})))))`);
       e.push(`    (global.set $A (i32.and (i32.sub (global.get $A) ${src}) (i32.const 0xff)))`);
+      irqAfter();
       return false;
     }
     case "LD": {
@@ -182,19 +195,23 @@ export function liftInstr(e: Emit, ins: Instr): boolean {
       // 8-bit reg <- reg/imm/mem (native for the simple shapes; else interp)
       if (dst.kind === "reg8" && (src.kind === "reg8" || src.kind === "imm8" || src.kind === "mem_reg16" || src.kind === "mem_imm16" || src.kind === "mem_high_imm8" || src.kind === "mem_high_c")) {
         e.push(`    (global.set $${dst.reg} ${readExpr(src)})`);
+        irqAfter();
         return false;
       }
       if (dst.kind === "mem_reg16" && src.kind === "reg8") {
         const pair = dst.reg === "BC" ? "bc16" : dst.reg === "DE" ? "de16" : "hl16";
         e.push(`    (call $wb (call $${pair}) (global.get $${src.reg}))`);
+        irqAfter();
         return false;
       }
       if ((dst.kind === "mem_imm16") && src.kind === "reg8") {
         e.push(`    (call $wb (i32.const ${dst.addr}) (global.get $${src.reg}))`);
+        irqAfter();
         return false;
       }
       if (dst.kind === "mem_high_imm8" && src.kind === "reg8") {
         e.push(`    (call $wb (i32.const ${0xff00 + dst.off}) (global.get $${src.reg}))`);
+        irqAfter();
         return false;
       }
       // everything else (16-bit loads, HL+/-, SP forms): route to interpreter for correctness
@@ -205,13 +222,16 @@ export function liftInstr(e: Emit, ins: Instr): boolean {
       const dst = ops[0]!, src = ops[1]!;
       if (dst.kind === "mem_high_imm8" && src.kind === "reg8") {
         e.push(`    (call $wb (i32.const ${0xff00 + dst.off}) (global.get $${src.reg}))`);
+        irqAfter();
         return false;
       }
       if (dst.kind === "reg8" && src.kind === "mem_high_imm8") {
         e.push(`    (global.set $${dst.reg} (call $rb (i32.const ${0xff00 + src.off})))`);
+        irqAfter();
         return false;
       }
       emitInterp(e, ins);
+      irqAfter();
       return false;
     }
 
@@ -300,8 +320,12 @@ export function liftInstr(e: Emit, ins: Instr): boolean {
       e.push(`    (return (i32.const ${SENTINEL_HALT}))`);
       return true;
     }
-    case "DI": { e.push(`    (call $set_ime (i32.const 0))`); return false; }
-    case "EI": { e.push(`    (call $sched_ei)`); return false; }
+    case "DI": {      e.push(`    (call $set_ime (i32.const 0))`);
+      irqAfter();
+      return false; }
+    case "EI": {      e.push(`    (call $sched_ei)`);
+      irqAfter();
+      return false; }
 
     case "ILLEGAL": {
       e.push(`    (return (i32.const ${SENTINEL_HALT}))`);
