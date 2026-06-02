@@ -40,16 +40,23 @@ export const SENTINEL_HALT = 0x10000; // out-of-range PC signals halt to the hos
 // directly in WASM; the rest delegate to the verified interpreter import. This drastically cuts
 // JS↔WASM crossings while preserving correctness for opcode families not yet lockstep-validated.
 const FORCE_INTERP_NON_TERMINATORS = true;
-const NATIVE_NON_TERMINATORS = new Set(["NOP", "DI", "EI", "XOR", "LDH"]);
+const NATIVE_NON_TERMINATORS = new Set(["NOP", "DI", "EI", "XOR", "LDH", "AND", "OR", "CP", "INC", "DEC", "ADD", "SUB"]);
 const NATIVE_LD_SHAPES = new Set<string>(["reg8<-reg8", "reg8<-mem_reg16", "reg8<-mem_imm16", "reg8<-mem_high_imm8", "reg8<-mem_high_c", "mem_reg16<-reg8", "mem_imm16<-reg8", "mem_high_imm8<-reg8"]);
 function ldShape(ins: Instr): string {
   const d = ins.operands[0], s = ins.operands[ins.operands.length - 1];
   return d && s ? `${d.kind}<-${s.kind}` : "";
 }
+function aluSrcShape(ins: Instr): string {
+  const s = ins.operands[ins.operands.length - 1];
+  return s?.kind ?? "";
+}
 function canNativeNonTerminator(ins: Instr): boolean {
-  if (NATIVE_NON_TERMINATORS.has(ins.mnemonic)) return true;
   if (ins.mnemonic === "LD") return NATIVE_LD_SHAPES.has(ldShape(ins));
-  return false;
+  if (ins.mnemonic === "INC" || ins.mnemonic === "DEC") return ins.operands[0]?.kind === "reg8";
+  if (ins.mnemonic === "AND" || ins.mnemonic === "OR" || ins.mnemonic === "CP" || ins.mnemonic === "ADD" || ins.mnemonic === "SUB") {
+    return ins.operands[0]?.kind === "reg8" && (ins.operands[0] as any).reg === "A" && ["reg8", "imm8"].includes(aluSrcShape(ins));
+  }
+  return NATIVE_NON_TERMINATORS.has(ins.mnemonic);
 }
 
 /** Emit a label name for a block at a given address. */
@@ -126,6 +133,48 @@ export function liftInstr(e: Emit, ins: Instr): boolean {
       // common idiom; native lift: A ^= src; flags Z000
       e.push(`    (global.set $A (i32.and (i32.xor (global.get $A) ${readExpr(ops[ops.length - 1]!)}) (i32.const 0xff)))`);
       e.push(`    (call $setflags_z (global.get $A))`);
+      return false;
+    }
+    case "AND": {
+      e.push(`    (global.set $A (i32.and (global.get $A) ${readExpr(ops[ops.length - 1]!)}) )`);
+      e.push(`    (global.set $A (i32.and (global.get $A) (i32.const 0xff)))`);
+      e.push(`    (global.set $F (i32.or (select (i32.const 0x80) (i32.const 0x00) (i32.eqz (global.get $A))) (i32.const 0x20)))`);
+      return false;
+    }
+    case "OR": {
+      e.push(`    (global.set $A (i32.and (i32.or (global.get $A) ${readExpr(ops[ops.length - 1]!)}) (i32.const 0xff)))`);
+      e.push(`    (call $setflags_z (global.get $A))`);
+      return false;
+    }
+    case "CP": {
+      const src = readExpr(ops[ops.length - 1]!);
+      e.push(`    (global.set $F (i32.or (i32.or (select (i32.const 0x80) (i32.const 0x00) (i32.eq (i32.and (i32.sub (global.get $A) ${src}) (i32.const 0xff)) (i32.const 0))) (i32.const 0x40)) (i32.or (select (i32.const 0x20) (i32.const 0x00) (i32.lt_u (i32.and (global.get $A) (i32.const 0x0f)) (i32.and ${src} (i32.const 0x0f)))) (select (i32.const 0x10) (i32.const 0x00) (i32.lt_u (global.get $A) ${src})))))`);
+      return false;
+    }
+    case "INC": {
+      const dst = ops[0]!;
+      if (dst.kind !== "reg8") { emitInterp(e, ins); return false; }
+      e.push(`    (global.set $F (i32.or (i32.or (select (i32.const 0x80) (i32.const 0x00) (i32.eq (i32.and (i32.add (global.get $${dst.reg}) (i32.const 1)) (i32.const 0xff)) (i32.const 0))) (select (i32.const 0x20) (i32.const 0x00) (i32.eq (i32.and (global.get $${dst.reg}) (i32.const 0x0f)) (i32.const 0x0f)))) (i32.and (global.get $F) (i32.const 0x10))))`);
+      e.push(`    (global.set $${dst.reg} (i32.and (i32.add (global.get $${dst.reg}) (i32.const 1)) (i32.const 0xff)))`);
+      return false;
+    }
+    case "DEC": {
+      const dst = ops[0]!;
+      if (dst.kind !== "reg8") { emitInterp(e, ins); return false; }
+      e.push(`    (global.set $F (i32.or (i32.or (i32.or (select (i32.const 0x80) (i32.const 0x00) (i32.eq (i32.and (i32.sub (global.get $${dst.reg}) (i32.const 1)) (i32.const 0xff)) (i32.const 0))) (i32.const 0x40)) (select (i32.const 0x20) (i32.const 0x00) (i32.eq (i32.and (global.get $${dst.reg}) (i32.const 0x0f)) (i32.const 0)))) (i32.and (global.get $F) (i32.const 0x10))))`);
+      e.push(`    (global.set $${dst.reg} (i32.and (i32.sub (global.get $${dst.reg}) (i32.const 1)) (i32.const 0xff)))`);
+      return false;
+    }
+    case "ADD": {
+      const src = readExpr(ops[ops.length - 1]!);
+      e.push(`    (global.set $F (i32.or (i32.or (select (i32.const 0x80) (i32.const 0x00) (i32.eq (i32.and (i32.add (global.get $A) ${src}) (i32.const 0xff)) (i32.const 0))) (select (i32.const 0x20) (i32.const 0x00) (i32.gt_u (i32.add (i32.and (global.get $A) (i32.const 0x0f)) (i32.and ${src} (i32.const 0x0f))) (i32.const 0x0f)))) (select (i32.const 0x10) (i32.const 0x00) (i32.gt_u (i32.add (global.get $A) ${src}) (i32.const 0xff)))))`);
+      e.push(`    (global.set $A (i32.and (i32.add (global.get $A) ${src}) (i32.const 0xff)))`);
+      return false;
+    }
+    case "SUB": {
+      const src = readExpr(ops[ops.length - 1]!);
+      e.push(`    (global.set $F (i32.or (i32.or (select (i32.const 0x80) (i32.const 0x00) (i32.eq (i32.and (i32.sub (global.get $A) ${src}) (i32.const 0xff)) (i32.const 0))) (i32.const 0x40)) (i32.or (select (i32.const 0x20) (i32.const 0x00) (i32.lt_u (i32.and (global.get $A) (i32.const 0x0f)) (i32.and ${src} (i32.const 0x0f)))) (select (i32.const 0x10) (i32.const 0x00) (i32.lt_u (global.get $A) ${src})))))`);
+      e.push(`    (global.set $A (i32.and (i32.sub (global.get $A) ${src}) (i32.const 0xff)))`);
       return false;
     }
     case "LD": {

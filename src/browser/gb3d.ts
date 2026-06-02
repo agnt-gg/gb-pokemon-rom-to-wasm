@@ -190,14 +190,15 @@ async function boot() {
   // THREE.JS SCENE
   // ===========================================================================
   const mount = document.getElementById("gl")!;
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: "high-performance" });
+  // Keep the 3D shell responsive: high-DPI + antialiasing can cut rAF below 60Hz and make
+  // gameplay feel slow even when emulation is fast. 1.25 is a good quality/perf compromise.
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
   renderer.setSize(mount.clientWidth, mount.clientHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.15;
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.enabled = false;
   mount.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
@@ -638,6 +639,7 @@ async function boot() {
   window.addEventListener("resize", () => {
     camera.aspect = mount.clientWidth / mount.clientHeight;
     camera.updateProjectionMatrix();
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
     renderer.setSize(mount.clientWidth, mount.clientHeight);
   });
 }
