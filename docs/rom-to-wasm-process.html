@@ -19,7 +19,7 @@
 <aside class="toc">
   <div class="brand"><div class="mark"></div><div><b>gb-recomp report</b><small>2026-06-02</small></div></div>
   <nav>
-    <a href="#abstract">00 · Abstract</a><a href="#time">01 · Time + autonomy</a><a href="#significance">02 · Frontier significance</a><a href="#correction">03 · Terminology</a><a href="#pipeline">04 · Pipeline</a><a href="#decoder">05 · Decode + CFG</a><a href="#lifter">06 · Lifting</a><a href="#runtime">07 · Runtime</a><a href="#verification">08 · Verification surface</a><a href="#debugging">09 · Debugging traps</a><a href="#graphics">10 · Graphics</a><a href="#saveaudio">11 · Save + audio</a><a href="#frontend">12 · Frontend + 3D</a><a href="#results">13 · Results</a><a href="#limits">14 · Boundaries</a><a href="#lessons">15 · Lessons</a>
+    <a href="#abstract">00 · Abstract</a><a href="#time">01 · Time + autonomy</a><a href="#significance">02 · Frontier significance</a><a href="#correction">03 · Terminology</a><a href="#pipeline">04 · Pipeline</a><a href="#decoder">05 · Decode + CFG</a><a href="#lifter">06 · Lifting</a><a href="#runtime">07 · Runtime</a><a href="#verification">08 · Verification surface</a><a href="#debugging">09 · Debugging traps</a><a href="#graphics">10 · Graphics</a><a href="#saveaudio">11 · Save + audio</a><a href="#frontend">12 · Frontend + 3D</a><a href="#results">13 · Results</a><a href="#postscript">14 · Timing postscript</a><a href="#limits">15 · Boundaries</a><a href="#lessons">15 · Lessons</a>
   </nav>
   <div class="side-note">Written as a lab notebook: the hangs, wrong guesses, and ugly seams are part of the result.</div>
 </aside>
@@ -224,6 +224,64 @@ if (!inFixedRom) {
     <tr><td>3D presentation</td><td class="good">Working</td><td>Live game on 3D Game Boy screen.</td></tr>
     <tr><td>Verification harness</td><td class="good">Substantial</td><td>Interpreter oracle, lockstep/divergence tests, decoder/ALU/CPU tests, DMA/APU/save tests, and runtime smoke checks.</td></tr>
   </tbody></table></div>
+</section>
+
+
+<section class="card" id="postscript">
+  <div class="kicker">14 · Postscript: the hard timing bug</div><h2 class="title">The hardest failure was not speed. It was correct cycles with wrong state.</h2>
+  <p class="lead">The most instructive bug appeared after the game was already playable. The WASM path felt slow, but its total cycle count was not meaningfully behind the interpreter. The machine was not globally underclocked; it was in the wrong state because a timing-sensitive transition driver observed hardware and HRAM state at a different block/interruption cadence.</p>
+  <blockquote>Cycle totals can be right while interleaving is wrong. In a console recompiler, a generated basic block is not only code; it is also a scheduling decision.</blockquote>
+  <div class="table"><table><thead><tr><th>Frame 300 observation</th><th>Interpreter oracle</th><th>WASM path before fix</th><th>WASM path after fix</th></tr></thead><tbody>
+    <tr><td>Program counter</td><td><code>0x20b4</code></td><td><code>0x1d5b</code></td><td><code>0x20b4</code></td></tr>
+    <tr><td>LCDC</td><td><code>0xcb</code></td><td><code>0xe3</code></td><td><code>0xcb</code></td></tr>
+    <tr><td>Visible non-background pixels</td><td><code>10240</code></td><td><code>979</code></td><td><code>10240</code></td></tr>
+    <tr><td>Cycle delta vs oracle</td><td><code>0</code></td><td>under one Game Boy frame, yet visibly wrong</td><td>about <code>52</code> cycles</td></tr>
+  </tbody></table></div>
+  <p>The suspicious loop was the title/transition wait region around <code>0x1d57</code> and <code>0x1d5b</code>:</p>
+  <pre><code>0x1d57  LDH A, ($BA)
+0x1d59  AND A
+0x1d5a  RET Z
+0x1d5b  LD HL, SP+0
+0x1d5e  LDH ($BF), A
+0x1d61  LDH ($C0), A
+0x1d63  LDH A, ($BB)
+0x1d65  AND A
+0x1d66  JR Z, +20</code></pre>
+  <p>The first attempted guard around only <code>0x1d40–0x1d80</code> was too narrow. That loop was the symptom, not the writer-side cause. HRAM traces showed the relevant transition flags were written by a broader fixed-ROM driver band, including routines around <code>0x184b</code>, <code>0x1876</code>, <code>0x1d9c</code>, and nearby <code>0x20xx</code> code. Those routines interact with HRAM transition state such as <code>FFBA</code>, <code>FFBB</code>, <code>FFBF</code>, and <code>FFC0</code>.</p>
+  <div class="callout"><div class="icon">⏱️</div><p><strong>Reliable fix:</strong> route the timing-sensitive fixed-ROM driver band <code>0x1800–0x2100</code> through the interpreter oracle while leaving the rest of fixed-ROM execution on generated WASM blocks. This removed the roughly 180-frame title/overworld delay without abandoning the hybrid WASM architecture.</p></div>
+
+  <h3>Block boundaries are semantic boundaries</h3>
+  <p>In a normal compiler, merging instructions into a basic block is mostly an optimization. In an emulator/recompiler, it can change when interrupts, VBlank, timers, joypad state, LY, and HRAM flags become visible. The final architecture therefore treats static recompilation as a selective tool, not an ideology: use WASM where behavior is stable, and use the interpreter where hardware interleaving is part of the program's meaning.</p>
+
+  <h3>Validated native fast path</h3>
+  <div class="grid two">
+    <div class="mini"><h4>Native WASM where validated</h4><p><code>NOP</code>, <code>DI</code>, <code>EI</code>, <code>XOR</code>, <code>LDH</code>, <code>AND</code>, <code>OR</code>, <code>CP</code>, <code>INC</code>, <code>DEC</code>, <code>ADD</code>, <code>SUB</code>, plus safe <code>LD</code> shapes such as register-to-register, memory-to-register, high-IO loads/stores, and immediate-address stores.</p></div>
+    <div class="mini"><h4>Interpreter where correctness requires it</h4><p>Banked or unsafe code, RAM/unknown code, unvalidated non-terminators, the dangerous <code>LD reg8 &lt;- imm8</code> shape, and the timing-sensitive <code>0x1800–0x2100</code> title/overworld driver band.</p></div>
+  </div>
+
+  <h3>Audio coupling: why speed hacks made music wrong</h3>
+  <p>The audio debugging produced a separate lesson. Pokémon's music engine is not an external media stream; it is ROM code running on the same SM83 CPU as gameplay. Speeding up the CPU also speeds up the code that writes <code>FF10–FF3F</code> APU registers: note triggers, envelopes, sweeps, panning, wave RAM, and master volume. Output stretching after the fact cannot fully repair a register stream that was already produced at the wrong cadence.</p>
+  <div class="table"><table><thead><tr><th>Trace result</th><th>Likely meaning</th></tr></thead><tbody>
+    <tr><td><code>0x5a34–0x5a55</code></td><td>Sound hardware initialization/reset: NR52 power, wave DAC, panning, envelope defaults, and master volume.</td></tr>
+    <tr><td><code>0x5500–0x5703</code></td><td>Main channel/music update machinery: duty, envelope, panning, frequency, trigger writes.</td></tr>
+    <tr><td><code>0x56e8–0x56f4</code></td><td>Wave channel disable, wave RAM load, and re-enable sequence.</td></tr>
+    <tr><td><code>0x56eb</code></td><td>Wave RAM writer for <code>FF30–FF3F</code>.</td></tr>
+    <tr><td><code>0x28db</code></td><td>Recurring <code>FF24</code> master-volume refresh.</td></tr>
+  </tbody></table></div>
+
+  <h3>False fixes rejected</h3>
+  <div class="table"><table><thead><tr><th>Attempt</th><th>Outcome</th></tr></thead><tbody>
+    <tr><td>Global playback speed compensation</td><td>Masked the symptom but did not fix state drift.</td></tr>
+    <tr><td>Hidden multi-frame catch-up</td><td>Kept time closer to realtime but made animation feel like it skipped frames.</td></tr>
+    <tr><td>Output audio stretching / inverse audio speed</td><td>Wrong layer: the music driver had already written APU registers at accelerated cadence.</td></tr>
+    <tr><td>Inside-block interrupt import</td><td>Changed LCDC/title behavior differently, but did not cleanly match the oracle.</td></tr>
+    <tr><td>One-instruction WASM blocks</td><td>Useful experiment, but regressed title/start behavior and was not the best stable architecture.</td></tr>
+    <tr><td>Guard only <code>0x1d40–0x1d80</code></td><td>Too narrow: it guarded the wait-loop symptom, not the writer-side transition driver.</td></tr>
+    <tr><td>Guard <code>0x1800–0x2100</code></td><td>Worked: matched interpreter transition state at frame 300 with negligible cycle delta.</td></tr>
+  </tbody></table></div>
+
+  <h3>Agentic debugging loop</h3>
+  <p>The AGNT workflow did not stop at producing the artifact. It observed user perception, formed hypotheses, patched pacing, rejected audio-layer fixes, traced APU register writers, compared interpreter and WASM frame states, isolated the <code>0x1d5b</code> wait-loop delay, traced HRAM writer-side flags, broadened the correctness guard, verified the before/after state, restarted the server, and committed the fix. The result is a stronger hybrid runtime and a concrete example of autonomous systems debugging across compiler, emulator, browser, audio, and product layers.</p>
 </section>
 
 <section class="card" id="limits">
