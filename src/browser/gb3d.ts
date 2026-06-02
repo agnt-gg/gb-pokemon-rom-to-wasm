@@ -563,9 +563,12 @@ async function boot() {
   }
 
   function loop(now: number) {
-    const dt = now - last; last = now;
-    // Smooth visual pacing: one emulated frame per rendered frame, no hidden catch-up frames.
-    machine.runFrame();
+    const rawDt = now - last;
+    const dt = frameCount === 0 ? (1000 / 59.7275) : Math.min(50, Math.max(1, rawDt));
+    last = now;
+    // Smooth real-time pacing: run elapsed Game Boy cycles, then render once. This keeps
+    // game time correct if rAF is 45-55Hz without hiding whole skipped frames.
+    machine.runForMilliseconds(dt);
     renderGbToCanvas();
     const a = machine.drainAudio();
     if (a.left.length) audio.push(a.left, a.right);
@@ -599,7 +602,7 @@ async function boot() {
 
     frameCount++; fpsAccum += dt;
     if (frameCount % 20 === 0) {
-      fpsEl.textContent = (1000 / (fpsAccum / 20)).toFixed(0) + " fps · smooth 1x";
+      fpsEl.textContent = (1000 / (fpsAccum / 20)).toFixed(0) + " fps · realtime cycles";
       fpsAccum = 0;
     }
     saver.tick();

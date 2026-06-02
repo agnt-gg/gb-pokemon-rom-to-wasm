@@ -214,11 +214,14 @@ async function boot() {
   let dead = false;
   function loop(now: number) {
     if (dead) return;
+    const rawDt = now - last;
+    const dt = frameCount === 0 ? (1000 / 59.7275) : Math.min(50, Math.max(1, rawDt));
+    last = now;
     try {
-      // Smooth visual pacing: run exactly one emulated frame per rendered frame.
-      // Catch-up mode kept game time closer under rAF drops, but hid intermediate frames
-      // and made walking/animation feel choppy compared with interpreter mode.
-      machine.runFrame();
+      // Smooth real-time pacing: advance Game Boy time by elapsed wall-clock milliseconds,
+      // then render once. This avoids both slow game-time at <60 rAF and chunky hidden
+      // multi-frame catch-up that skips visible animation frames.
+      machine.runForMilliseconds(dt);
     } catch (err) {
       dead = true;
       statusEl.textContent = "frame error: " + (err as Error).message;
@@ -232,11 +235,10 @@ async function boot() {
     saver.tick();
 
     frameCount++;
-    const dt = now - last; last = now;
     fpsAccum += dt;
     if (frameCount % 15 === 0) {
       const stall = (machine as any).lastStall;
-      fpsEl.textContent = (1000 / (fpsAccum / 15)).toFixed(0) + " fps · smooth 1x";
+      fpsEl.textContent = (1000 / (fpsAccum / 15)).toFixed(0) + " fps · realtime cycles";
       statusEl.textContent = stall ? ("running ✓ (" + stall + ")") : ("running ✓ frame " + frameCount);
       fpsAccum = 0;
     }

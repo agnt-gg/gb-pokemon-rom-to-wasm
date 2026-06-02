@@ -16,6 +16,7 @@ import { APU, apuIoHooks } from "../runtime/apu.ts";
 import { decode } from "../recompiler/decoder.ts";
 import { UNKNOWN_BLOCK, SENTINEL_HALT } from "../recompiler/module.ts";
 
+export const CPU_HZ = 4194304;
 export const CYCLES_PER_FRAME = 70224;
 
 export class BrowserMachine {
@@ -233,6 +234,20 @@ export class BrowserMachine {
   runFrame(): void {
     this.ppu.frameReady = false;
     this.runCycles(CYCLES_PER_FRAME);
+    this.frames++;
+  }
+
+  /**
+   * Real-time pacing entrypoint for browser rAF loops. Instead of assuming the browser
+   * renders exactly 59.7275 times/sec, run the number of Game Boy t-cycles matching the
+   * actual elapsed wall-clock milliseconds. This keeps game time correct without chunky
+   * multi-frame catch-up that hides intermediate animation frames.
+   */
+  runForMilliseconds(ms: number): void {
+    const clamped = Math.max(1, Math.min(50, ms));
+    const cycles = Math.max(4, Math.round((CPU_HZ * clamped) / 1000));
+    this.ppu.frameReady = false;
+    this.runCycles(cycles);
     this.frames++;
   }
 
