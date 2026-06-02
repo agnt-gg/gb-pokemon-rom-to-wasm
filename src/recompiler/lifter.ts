@@ -35,11 +35,22 @@ import { hex4 } from "./decoder.ts";
 
 export const SENTINEL_HALT = 0x10000; // out-of-range PC signals halt to the host loop
 
-// Conservative correctness mode for the browser demo: generated WASM still owns basic-block
-// dispatch/timing/control-flow, but ordinary instruction semantics are delegated to the verified
-// interpreter import. This keeps the game running through WASM blocks while avoiding partially
-// validated native opcode lifts. Flip this off only when each native opcode family passes lockstep.
+// Conservative optimized mode for the browser demo: generated WASM owns basic-block dispatch,
+// timing, and control-flow. High-frequency opcode families that have native lifts below execute
+// directly in WASM; the rest delegate to the verified interpreter import. This drastically cuts
+// JS↔WASM crossings while preserving correctness for opcode families not yet lockstep-validated.
 const FORCE_INTERP_NON_TERMINATORS = true;
+const NATIVE_NON_TERMINATORS = new Set(["NOP", "DI", "EI", "XOR", "LDH"]);
+const NATIVE_LD_SHAPES = new Set<string>(["reg8<-reg8", "reg8<-mem_reg16", "reg8<-mem_imm16", "reg8<-mem_high_imm8", "reg8<-mem_high_c", "mem_reg16<-reg8", "mem_imm16<-reg8", "mem_high_imm8<-reg8"]);
+function ldShape(ins: Instr): string {
+  const d = ins.operands[0], s = ins.operands[ins.operands.length - 1];
+  return d && s ? `${d.kind}<-${s.kind}` : "";
+}
+function canNativeNonTerminator(ins: Instr): boolean {
+  if (NATIVE_NON_TERMINATORS.has(ins.mnemonic)) return true;
+  if (ins.mnemonic === "LD") return NATIVE_LD_SHAPES.has(ldShape(ins));
+  return false;
+}
 
 /** Emit a label name for a block at a given address. */
 export function blockName(addr: number): string {
@@ -102,7 +113,7 @@ export function liftInstr(e: Emit, ins: Instr): boolean {
   // advance cycle budget for this instruction
   e.push(`    (call $tick (i32.const ${ins.cycles}))`);
 
-  if (FORCE_INTERP_NON_TERMINATORS && !ins.isTerminator) {
+  if (FORCE_INTERP_NON_TERMINATORS && !ins.isTerminator && !canNativeNonTerminator(ins)) {
     emitInterp(e, ins);
     return false;
   }
