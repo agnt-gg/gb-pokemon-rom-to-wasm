@@ -225,7 +225,9 @@ async function boot() {
     localStorage.setItem(SPEED_STORAGE_KEY, String(PLAYBACK_SPEED));
     // Gameplay/PPU run at PLAYBACK_SPEED, but APU stays near 1x so music/SFX pitch and tempo
     // do not speed up when we boost perceived walking speed.
-    machine.audioCycleScale = AUDIO_SPEED / PLAYBACK_SPEED;
+    // Keep APU oscillator time near real-time; output stream speed is controlled by AudioSink.
+    machine.audioCycleScale = 1 / PLAYBACK_SPEED;
+    audio.setPlaybackSpeed(AUDIO_SPEED);
     if (speedStatus) speedStatus.textContent = PLAYBACK_SPEED + "x gameplay";
     if (audioStatus) audioStatus.textContent = AUDIO_SPEED + "x audio";
     speedButtons.forEach((b) => {
@@ -238,7 +240,8 @@ async function boot() {
   function applyAudioSpeed(v: number) {
     AUDIO_SPEED = validAudioSpeed(v);
     localStorage.setItem("gb-audio-speed", String(AUDIO_SPEED));
-    machine.audioCycleScale = AUDIO_SPEED / PLAYBACK_SPEED;
+    machine.audioCycleScale = 1 / PLAYBACK_SPEED;
+    audio.setPlaybackSpeed(AUDIO_SPEED);
     if (audioStatus) audioStatus.textContent = AUDIO_SPEED + "x audio";
     if (speedStatus) speedStatus.textContent = PLAYBACK_SPEED + "x gameplay";
     audioSpeedButtons.forEach((b) => {
