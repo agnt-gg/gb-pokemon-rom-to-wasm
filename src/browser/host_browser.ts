@@ -188,10 +188,32 @@ export class BrowserMachine {
       // RAM-resident code (VRAM/SRAM/WRAM/echo/HRAM at >=0x8000) — must be interpreted against
       // live memory, since those bytes are written at runtime and were never statically lifted.
       const inFixedRom = cur < 0x4000;
+
+      // TITLE/OVERWORLD TIMING GUARD:
+      // Traces showed the delay is not only the 0x1d57 wait loop; the HRAM transition flags
+      // it waits on are written by nearby fixed-ROM driver routines around 0x184b/0x1876/0x1d9c
+      // and related 0x1dxx/0x20xx code. Running this band as multi-instruction WASM blocks
+      // changes the VBlank/HRAM cadence and delays the title/overworld transition by ~180 frames.
+      // Route this timing-sensitive fixed-ROM driver band through the oracle interpreter while
+      // keeping the rest of fixed ROM on generated WASM blocks.
+      if (cur >= 0x1800 && cur <= 0x2100) {
+        this.syncWasmToCpu();
+        let inner = 0;
+        while ((cpu.pc & 0xffff) >= 0x1800 && (cpu.pc & 0xffff) <= 0x2100 && inner++ < 1024 && !cpu.halted && (cpu.cycles - start) < target) {
+          const b = cpu.cycles;
+          cpu.step();
+          if (this.tickCb) this.tickCb(cpu.cycles - b);
+          const ic2 = cpu.serviceInterrupts();
+          if (ic2 > 0 && this.tickCb) this.tickCb(ic2);
+        }
+        this.syncCpuToWasm();
+        continue;
+      }
+
       if (!inFixedRom) {
         this.syncWasmToCpu();
         let inner = 0;
-        while (((cpu.pc & 0xffff) >= 0x4000) && inner++ < 16384 && !cpu.halted && (cpu.cycles - start) < target) {
+        while (((cpu.pc & 0xffff) >= 0x4000) && inner++ < 4096 && !cpu.halted && (cpu.cycles - start) < target) {
           const b = cpu.cycles;
           cpu.step();
           if (this.tickCb) this.tickCb(cpu.cycles - b);
