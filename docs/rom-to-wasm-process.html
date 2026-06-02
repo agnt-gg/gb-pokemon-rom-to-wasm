@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>From ROM Bytes to WebAssembly · gb-recomp Research Note</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;600&family=Fraunces:opsz,wght@9..144,500;9..144,700&display=swap" rel="stylesheet">
+<style>
+*{scrollbar-width: none}
+:root{--bg:#07080d;--panel:rgba(18,20,30,.78);--panel2:rgba(255,255,255,.05);--ink:#f3f0e8;--muted:#a2a6b3;--line:rgba(255,255,255,.13);--pink:#e53d8f;--cyan:#12e0ff;--green:#19ef83;--gold:#ffd23b;--red:#ff5a5a;--code:#0e111a;--sans:'Space Grotesk',system-ui,sans-serif;--serif:'Fraunces',Georgia,serif;--mono:'JetBrains Mono',ui-monospace,monospace}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;color:var(--ink);font-family:var(--sans);line-height:1.65;background:radial-gradient(900px 600px at 80% -10%,rgba(229,61,143,.18),transparent 60%),radial-gradient(760px 520px at 7% 18%,rgba(18,224,255,.13),transparent 60%),linear-gradient(180deg,#07080d,#0d1018);overflow-x:hidden}body:before{content:"";position:fixed;inset:0;z-index:-1;opacity:.055;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='130' height='130'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='.8' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}.wrap{display:grid;grid-template-columns:285px minmax(0,1fr);gap:32px;max-width:1420px;margin:auto;padding:32px 32px 80px}.toc{position:sticky;top:24px;height:calc(100vh - 48px);overflow:auto;border:1px solid var(--line);border-radius:24px;background:rgba(10,12,18,.68);backdrop-filter:blur(18px);padding:18px;box-shadow:0 30px 90px rgba(0,0,0,.45)}.brand{display:flex;gap:12px;align-items:center;margin-bottom:18px}.mark{width:40px;height:40px;border-radius:13px;background:conic-gradient(var(--pink),var(--cyan),var(--green),var(--pink));box-shadow:0 0 26px rgba(18,224,255,.25)}.brand b{display:block;line-height:1.1}.brand small{font-family:var(--mono);font-size:10px;color:var(--muted)}nav{display:grid;gap:4px}nav a{font-family:var(--mono);font-size:12px;color:var(--muted);text-decoration:none;padding:9px 10px;border-radius:10px;border:1px solid transparent}nav a:hover{color:var(--ink);background:rgba(255,255,255,.055);border-color:var(--line)}.side-note{margin-top:18px;border:1px solid rgba(255,210,59,.28);border-radius:14px;padding:12px;color:#dac77d;background:rgba(255,210,59,.07);font:11px var(--mono)}main{min-width:0}.hero{padding:54px 0 24px}.eyebrow{display:inline-flex;gap:8px;align-items:center;border:1px solid var(--line);border-radius:999px;padding:7px 12px;background:rgba(255,255,255,.045);font:12px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--cyan)}.dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 12px var(--green)}h1{font-family:var(--serif);font-size:clamp(44px,7vw,88px);line-height:.94;letter-spacing:-.055em;margin:22px 0 18px;max-width:980px}.grad{background:linear-gradient(90deg,var(--ink),#c6ecff 38%,#ffd1ec 74%,var(--ink));-webkit-background-clip:text;background-clip:text;color:transparent}.dek{font-size:clamp(18px,2vw,24px);color:#cbd0db;max-width:900px}.meta{display:flex;flex-wrap:wrap;gap:10px}.pill{border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.045);padding:8px 12px;font:12px var(--mono);color:var(--muted)}.pill b{color:var(--ink)}section.card{border:1px solid var(--line);border-radius:24px;background:var(--panel);backdrop-filter:blur(18px);box-shadow:0 30px 90px rgba(0,0,0,.45);padding:28px;margin:22px 0}.kicker{font:12px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--cyan);margin-bottom:8px}.title{font-family:var(--serif);font-size:42px;line-height:1.02;letter-spacing:-.035em;margin:0 0 16px}.lead{font-size:19px;color:#d6d9e1}.grid{display:grid;gap:16px}.two{grid-template-columns:repeat(2,minmax(0,1fr))}.three{grid-template-columns:repeat(3,minmax(0,1fr))}.mini{border:1px solid var(--line);border-radius:16px;background:var(--panel2);padding:16px}.mini h4{margin:0 0 8px}.mini p{margin:0;color:var(--muted);font-size:14px}.stat{font:600 29px var(--mono);color:var(--cyan)}.stat small{display:block;font-size:11px;color:var(--muted);margin-top:8px}.flow{display:grid;grid-template-columns:repeat(9,minmax(90px,1fr));gap:8px;margin:24px 0;overflow:auto;padding-bottom:8px}.node{position:relative;min-width:90px;border:1px solid var(--line);border-radius:14px;padding:12px;background:rgba(255,255,255,.045)}.node:not(:last-child):after{content:'→';position:absolute;right:-15px;top:50%;transform:translateY(-50%);color:var(--cyan);font-family:var(--mono)}.node strong{display:block;font-size:12px}.node span{font:10px var(--mono);color:var(--muted)}pre{background:linear-gradient(180deg,#11131c,#0b0d13);border:1px solid var(--line);border-radius:18px;padding:18px;overflow:auto}pre code{font:12px var(--mono);color:#dbe5ff}code,kbd{font-family:var(--mono)}blockquote{margin:22px 0;padding:20px 22px;border-left:4px solid var(--pink);border-radius:0 16px 16px 0;background:rgba(229,61,143,.08);font-size:18px;color:#ead9e3}.table{overflow:auto;border:1px solid var(--line);border-radius:18px}table{width:100%;border-collapse:collapse;background:rgba(255,255,255,.03)}th,td{text-align:left;padding:13px 14px;border-bottom:1px solid var(--line);vertical-align:top}th{font:11px var(--mono);color:var(--cyan);letter-spacing:.08em;text-transform:uppercase}td{font-size:14px;color:#d9dce5}.timeline{display:grid;gap:14px}.event{display:grid;grid-template-columns:122px 1fr;gap:18px}.when{font:12px var(--mono);color:var(--cyan);padding-top:5px}.what{border-left:1px solid var(--line);padding-left:18px}.what h4{margin:0 0 6px}.what p{margin:0;color:var(--muted)}.callout{display:flex;gap:14px;border:1px solid rgba(18,224,255,.25);background:rgba(18,224,255,.065);border-radius:18px;padding:16px;margin:18px 0}.icon{font-size:24px}.diagram{white-space:pre;overflow:auto;background:#080a10;border:1px solid var(--line);border-radius:16px;padding:18px;font:12px/1.55 var(--mono);color:#cbd5e1}.good{color:var(--green)}.warn{color:var(--gold)}.bug{color:var(--red)}.footer{text-align:center;color:var(--muted);font:12px var(--mono);padding:40px 0}@media(max-width:980px){.wrap{grid-template-columns:1fr;padding:20px}.toc{position:relative;height:auto;top:auto}.two,.three{grid-template-columns:1fr}.event{grid-template-columns:1fr}.flow{grid-template-columns:1fr}.node:after{display:none}h1{font-size:48px}}@media print{body{background:white;color:#111}.wrap{display:block}.toc{display:none}.card{box-shadow:none;background:white;color:#111;break-inside:avoid}.dek,.lead,td{color:#222}pre,.diagram{background:#f6f6f6;color:#111}}
+</style>
+</head>
+<body>
+<!-- <context date="2026-06-02" /> -->
+<div id="progress" aria-hidden="true" style="position:fixed;top:0;left:0;height:3px;width:0;z-index:9999;background:linear-gradient(90deg,#e53d8f,#12e0ff,#19ef83);box-shadow:0 0 16px rgba(18,224,255,.55)"></div>
+<div class="wrap">
+<aside class="toc">
+  <div class="brand"><div class="mark"></div><div><b>gb-recomp report</b><small>2026-06-02</small></div></div>
+  <nav>
+    <a href="#abstract">00 · Abstract</a><a href="#time">01 · Time + autonomy</a><a href="#significance">02 · Frontier significance</a><a href="#correction">03 · Terminology</a><a href="#pipeline">04 · Pipeline</a><a href="#decoder">05 · Decode + CFG</a><a href="#lifter">06 · Lifting</a><a href="#runtime">07 · Runtime</a><a href="#verification">08 · Verification surface</a><a href="#debugging">09 · Debugging traps</a><a href="#graphics">10 · Graphics</a><a href="#saveaudio">11 · Save + audio</a><a href="#frontend">12 · Frontend + 3D</a><a href="#results">13 · Results</a><a href="#limits">14 · Boundaries</a><a href="#lessons">15 · Lessons</a>
+  </nav>
+  <div class="side-note">Written as a lab notebook: the hangs, wrong guesses, and ugly seams are part of the result.</div>
+</aside>
+<main>
+<header class="hero">
+  <div class="eyebrow"><span class="dot"></span> Scientific build note · local ROM · browser WASM</div>
+  <h1><span class="grad">From Pokémon Red ROM bytes to playable WebAssembly</span></h1>
+  <p class="dek">A candid, implementation-level writeup of how an AGNT AI agent navigated from raw Game Boy ROM bytes through machine-code decoding, static lifting, interpreter-oracle debugging, hardware-runtime reconstruction, browser audio/graphics/input, persistent saves, reusable skills, and polished 2D/3D product presentation.</p>
+  <div class="meta"><span class="pill"><b>Date</b> · 2026-06-02</span><span class="pill"><b>Target</b> · Pokémon Red / MBC3</span><span class="pill"><b>Output</b> · SM83 blocks → WASM</span><span class="pill"><b>Time</b> · ~3.75 hours</span><span class="pill"><b>Mode</b> · autonomous AGNT agent build</span><span class="pill"><b>Claim</b> · bits-to-product systems sprint</span><span class="pill"><b>Verification</b> · interpreter oracle + targeted tests</span><span class="pill"><b>Status</b> · playable + saves + sound + 3D shell</span></div>
+</header>
+
+<section class="card" id="abstract">
+  <div class="kicker">00 · Abstract</div><h2 class="title">The short version</h2>
+  <p class="lead">This is not a conventional emulator UI, and it is not a source-code port. The system reads a real Game Boy ROM, decodes Sharp SM83 machine code, discovers reachable basic blocks, emits WebAssembly for those blocks, and supplies the missing Game Boy hardware in JavaScript: MMU, MBC3 banking, PPU, OAM DMA, APU, timers, interrupts, joypad, SRAM, and save-states.</p>
+  <div class="flow"><div class="node"><strong>ROM</strong><span>.gb bytes</span></div><div class="node"><strong>MMU</strong><span>banks</span></div><div class="node"><strong>Decode</strong><span>SM83</span></div><div class="node"><strong>CFG</strong><span>blocks</span></div><div class="node"><strong>Lift</strong><span>WAT</span></div><div class="node"><strong>Assemble</strong><span>WASM</span></div><div class="node"><strong>Host</strong><span>V8</span></div><div class="node"><strong>Runtime</strong><span>PPU/APU</span></div><div class="node"><strong>Play</strong><span>browser</span></div></div>
+  <div class="grid three"><div class="mini"><div class="stat">1698<small>basic blocks discovered</small></div></div><div class="mini"><div class="stat">7543<small>instructions in discovered graph</small></div></div><div class="mini"><div class="stat">127KB<small>generated WASM module</small></div></div></div>
+</section>
+
+<section class="card" id="time">
+  <div class="kicker">01 · Time, autonomy, and operating model</div><h2 class="title">Built fully autonomously through AGNT, over one concentrated overnight session.</h2>
+  <p class="lead">The implementation was carried out end-to-end by Annie, an AI agent operating inside the AGNT system. The user supplied the goal, occasional direction, and aesthetic feedback; the agent performed the engineering work autonomously: inspecting code, designing patches, editing files, running builds and tests, restarting the server, generating assets, verifying behavior, and producing the final research document.</p>
+  <div class="grid three">
+    <div class="mini"><div class="stat">~3.5h<small>from first project files to playable graphics, saves, audio, and 3D functionality</small></div></div>
+    <div class="mini"><div class="stat">~3.75h<small>including the publishable report and final presentation polish</small></div></div>
+    <div class="mini"><div class="stat">1 agent<small>AGNT-orchestrated autonomous coding, testing, verification, and documentation loop</small></div></div>
+  </div>
+  <p>The time estimate comes from the local project timestamps. The earliest generated source/config files in <code>gb-recomp</code> appeared around <code>2026-06-01 23:30</code> local time; the compiled browser artifacts were updated around <code>2026-06-02 02:59</code>; and the research writeup landed around <code>03:12</code>. That places the functional system at roughly three and a half hours, and the complete documented artifact at roughly three hours forty-five minutes.</p>
+  <div class="callout"><div class="icon">🤖</div><p><strong>AGNT's role was not merely conversational.</strong> The AI agent used AGNT as an autonomous development environment: filesystem inspection, TypeScript/HTML/CSS edits, shell-based compilers, Node tests, runtime diagnostics, HTTP smoke checks, local server restarts, image generation, report generation, and skill creation all happened inside the AGNT tool loop.</p></div>
+  <div class="table"><table><thead><tr><th>Autonomous capability</th><th>Concrete role in the build</th></tr></thead><tbody>
+    <tr><td>Repository inspection</td><td>Mapped the recompiler, runtime, browser host, tests, and web frontend before changing code.</td></tr>
+    <tr><td>Code editing</td><td>Patched the SM83 runtime, MMU/OAM DMA, save system, APU, 2D frontend, Three.js frontend, and skills.</td></tr>
+    <tr><td>Build execution</td><td>Ran TypeScript builds, Node tests, bundle checks, server restarts, and PowerShell HTTP probes.</td></tr>
+    <tr><td>Runtime verification</td><td>Checked OAM population, frame pixel counts, save round-trips, APU sample production, served MIME types, and bundle contents.</td></tr>
+    <tr><td>Visual production</td><td>Generated themed backgrounds, designed the 2D page, modeled the custom 3D Game Boy, and iterated tactile controls and transparent shell internals.</td></tr>
+  </tbody></table></div>
+  <blockquote>The notable result is not only that the ROM was lifted and hosted, but that an AGNT AI agent closed the loop: implement, run, observe, debug, verify, polish, document, and package the method for reuse.</blockquote>
+
+<section class="card" id="significance">
+  <div class="kicker">02 · Frontier significance</div><h2 class="title">The important claim is not that Pokémon runs in a browser. It is that an AI agent crossed the stack from bits to product.</h2>
+  <p class="lead">Many people have written Game Boy emulators. Many people have run Pokémon in browsers. The significance of this build is different: an autonomous agent traversed binary analysis, compiler construction, hardware-runtime reconstruction, instruction/block-level debugging, browser audio/graphics/input, save-system UX, generated visual assets, reusable skill creation, and high-end 3D presentation in one continuous loop.</p>
+  <div class="grid two">
+    <div class="mini"><h4>Not a toy demo</h4><p>The work touches SM83 decoding, block discovery, WAT/WASM generation, MBC/MMU behavior, PPU/OAM DMA rendering, APU/WebAudio, state serialization, and Three.js productization.</p></div>
+    <div class="mini"><h4>Not merely a wrapper</h4><p>The browser artifact was not produced by embedding an existing emulator. The ROM's machine code was decoded and lifted, then hosted inside a custom hardware runtime.</p></div>
+    <div class="mini"><h4>Not only code generation</h4><p>The agent had to falsify bad hypotheses, run diagnostics, compare execution models, inspect memory/register traces, and repair causal bugs.</p></div>
+    <div class="mini"><h4>Not fundamental physics</h4><p>The contribution is not a new theorem of binary translation. It is a frontier demonstration of autonomous applied systems engineering across hard domains.</p></div>
+  </div>
+  <blockquote>The strongest version of the claim is: an AGNT AI agent navigated from raw ROM bytes through machine-code decoding, static lifting, interpreter-oracle validation, hardware-runtime reconstruction, correctness debugging, and polished browser presentation. That is a qualitatively different class of accomplishment than a CRUD app, dashboard, landing page, wrapper, or single-library demo.</blockquote>
+</section>
+
+<section class="card" id="correction">
+  <div class="kicker">01 · Critical terminology</div><h2 class="title">Not ASM source → WASM. ROM machine code → WASM.</h2>
+  <p>There is an important distinction. Pokémon Red has a famous disassembly project, but this build did not compile that source. It read the actual cartridge image. The bytes in the ROM are already assembled SM83 instructions. The recompiler's job is to decode those bytes back into instruction objects and lift them into WebAssembly.</p>
+  <blockquote>The pipeline is: <code>Pokemon Red.gb → SM83 decoder → block graph → WAT module → WASM → JS hardware runtime</code>.</blockquote>
+  <pre><code>Not this:
+  pokered.asm → assembler/compiler → wasm
+
+Actually this:
+  Pokemon Red.gb bytes → decode opcodes → lift reachable machine-code blocks → wasm</code></pre>
+</section>
+
+<section class="card" id="pipeline">
+  <div class="kicker">02 · Pipeline</div><h2 class="title">The build path, step by step</h2>
+  <div class="timeline">
+    <div class="event"><div class="when">1 · Load</div><div class="what"><h4>Read the local ROM</h4><p>The dev server reads the user's local <code>.gb</code> file and wraps it in an MMU that knows the Game Boy address map and MBC3 banking.</p></div></div>
+    <div class="event"><div class="when">2 · Seed</div><div class="what"><h4>Skip copyrighted boot ROM</h4><p>The CPU registers are initialized to the known post-boot DMG state, then execution begins at cartridge address <code>0x0100</code>.</p></div></div>
+    <div class="event"><div class="when">3 · Decode</div><div class="what"><h4>Turn bytes into instructions</h4><p>The decoder maps raw opcodes into structured operations: mnemonic, operands, length, cycles, branch targets, and terminator status.</p></div></div>
+    <div class="event"><div class="when">4 · Discover</div><div class="what"><h4>Walk reachable control flow</h4><p>Starting from cartridge entry and interrupt vectors, the recompiler recursively discovers static basic blocks.</p></div></div>
+    <div class="event"><div class="when">5 · Lift</div><div class="what"><h4>Emit WebAssembly Text</h4><p>Each block becomes a WASM function that mutates register globals, calls imported memory/timing functions, and returns the next PC.</p></div></div>
+    <div class="event"><div class="when">6 · Host</div><div class="what"><h4>Run in BrowserMachine</h4><p>V8 executes the generated WASM while JS provides the cartridge bus, graphics, sound, timers, input, saves, and interrupts.</p></div></div>
+  </div>
+</section>
+
+<section class="card" id="decoder">
+  <div class="kicker">03 · Decoder + block graph</div><h2 class="title">Finding executable structure inside raw bytes</h2>
+  <p>The decoder classifies each instruction and, crucially, identifies terminators: <code>JP</code>, <code>JR</code>, <code>CALL</code>, <code>RET</code>, <code>RST</code>, <code>HALT</code>, and <code>STOP</code>. Static targets are queued as new block starts.</p>
+  <pre><code>// conceptual instruction object
+{
+  addr: 0x006f,
+  mnemonic: "JR",
+  operands: [{ kind: "cond", cc: "NZ" }, { kind: "simm8", value: -6 }],
+  length: 2,
+  cycles: 8,
+  cyclesBranch: 12,
+  isTerminator: true,
+  staticTargets: [0x006b, 0x0071]
+}</code></pre>
+  <div class="callout"><div class="icon">⚠️</div><p><strong>A subtle decoder bug nearly sank the run:</strong> the token <code>C</code> was originally parsed as the carry condition even in non-control-flow instructions. That turned <code>INC C</code>, <code>DEC C</code>, and <code>LD C,n</code> into broken operations. The fix was to treat <code>NZ/Z/NC/C</code> as condition codes only for <code>JP/JR/CALL/RET</code>; otherwise <code>C</code> is register C.</p></div>
+</section>
+
+<section class="card" id="lifter">
+  <div class="kicker">04 · Lifting into WASM</div><h2 class="title">Registers become globals. Memory becomes host calls.</h2>
+  <p>The WASM module stores CPU registers as globals: <code>A/F/B/C/D/E/H/L/SP/PC</code>. It does not directly index ROM or RAM. Every load/store calls imported JS functions <code>rb</code> and <code>wb</code>, so bank switching and IO side effects remain faithful.</p>
+  <div class="grid two"><div><h3>SM83</h3><pre><code>LDH ($0F), A
+LDH A, ($FF)
+LD B, A
+RES 0, A
+LDH ($FF), A</code></pre></div><div><h3>Conceptual WASM</h3><pre><code>(call $wb (i32.const 0xff0f) (global.get $A))
+(global.set $A (call $rb (i32.const 0xffff)))
+(global.set $B (global.get $A))
+;; RES via helper/interp path
+(call $wb (i32.const 0xffff) (global.get $A))</code></pre></div></div>
+  <p>Each block returns a next-PC. The host dispatches the next block, or falls back to the interpreter for regions that cannot be statically trusted.</p>
+</section>
+
+<section class="card" id="runtime">
+  <div class="kicker">05 · JS hardware runtime</div><h2 class="title">The WASM is only the CPU-side program. The Game Boy is everything else.</h2>
+  <div class="table"><table><thead><tr><th>Subsystem</th><th>What it provides</th><th>Why it mattered</th></tr></thead><tbody>
+    <tr><td>MMU / MBC3</td><td>ROM bank window, SRAM, HRAM, WRAM, IO, IE</td><td>Pokémon constantly bank-switches and saves to external RAM.</td></tr>
+    <tr><td>PPU</td><td>Tile maps, window layer, OBJ sprites, palettes, scanline timing</td><td>Turns VRAM/OAM writes into pixels.</td></tr>
+    <tr><td>OAM DMA</td><td><code>FF46</code> copies 160 bytes into sprite OAM</td><td>Without it, player/Oak/NPCs/Poké Balls were invisible.</td></tr>
+    <tr><td>Timer + interrupts</td><td>DIV/TIMA/TMA/TAC and interrupt requests</td><td>Game loops wait on VBlank/timer behavior.</td></tr>
+    <tr><td>Joypad</td><td><code>FF00</code> input matrix + interrupt</td><td>Keyboard and 3D buttons both drive the same hardware input.</td></tr>
+    <tr><td>APU</td><td>4-channel DMG audio, WebAudio worklet ring buffer</td><td>Music/SFX: square waves, wave channel, noise, envelopes, sweep.</td></tr>
+  </tbody></table></div>
+</section>
+
+<section class="card" id="verification">
+  <div class="kicker">08 · Verification surface</div><h2 class="title">The agent did not merely “make it display something.” It built a practical oracle and regression harness.</h2>
+  <p class="lead">The work was not formal proof in the compiler-research sense, but it was also not vibe-based debugging. The project accumulated a broad practical verification surface: decoder tests, ALU/CPU tests, interpreter-vs-recompiler comparisons, first-divergence probes, bank-state diagnostics, OAM DMA checks, APU tests, save-system tests, and browser-runtime smoke checks.</p>
+  <div class="grid two">
+    <div class="mini"><h4>Instruction + decoder semantics</h4><p><code>decoder.test.ts</code>, <code>alu.test.ts</code>, <code>cpu.test.ts</code>, <code>inc_c.test.ts</code>, <code>cp_bug.test.ts</code>, <code>cp_real.test.ts</code>, <code>dec_jr.test.ts</code>, <code>ldh_ff.test.ts</code>. These caught instruction-level hazards, including the register-C versus carry-condition ambiguity.</p></div>
+    <div class="mini"><h4>Interpreter oracle + divergence tracing</h4><p><code>lockstep2.test.ts</code>, <code>lockstep3.test.ts</code>, <code>compare_state.test.ts</code>, <code>first_divergence.test.ts</code>, <code>sp_divergence.test.ts</code>, <code>frame_diverge.test.ts</code>, <code>oracle_at_b5.test.ts</code>, <code>oracle_hram.test.ts</code>. These tests turned “it crashed” into “this exact state diverged here.”</p></div>
+    <div class="mini"><h4>Banking + unsafe-code diagnostics</h4><p><code>confirm_bank.test.ts</code>, <code>disasm5876.test.ts</code>, <code>catch_hybrid.test.ts</code>, <code>catch_crash.test.ts</code>, <code>reach589b.test.ts</code>, <code>path_to_b5.test.ts</code>. These established why banked ROM must be interpreted unless block identity includes bank context.</p></div>
+    <div class="mini"><h4>Hardware/runtime probes</h4><p><code>dma_copy.test.ts</code>, <code>dma_routine.test.ts</code>, <code>find_dma.test.ts</code>, <code>oam_check.test.ts</code>, <code>ly_wait.test.ts</code>, <code>irq_trace.test.ts</code>, <code>irq_leak.test.ts</code>, <code>mmu_hram.test.ts</code>. These validated PPU-relevant timing, OAM DMA, interrupts, and memory regions.</p></div>
+    <div class="mini"><h4>Playable-browser validation</h4><p><code>hybrid_screen.test.ts</code>, <code>browser_sim.test.ts</code>, <code>instantiate.test.ts</code>, <code>machine.test.ts</code>, <code>progress.test.ts</code>, <code>boot.test.ts</code>. These checked that the machine boots, advances frames, instantiates WASM, and produces visible framebuffer progress.</p></div>
+    <div class="mini"><h4>Audio + persistence</h4><p><code>apu.test.ts</code> and <code>save_system.test.ts</code> verified that the APU path produces samples and the save system can round-trip persistent machine state. This matters because playable means more than pixels.</p></div>
+  </div>
+  <div class="callout"><div class="icon">🧪</div><p><strong>Correct claim:</strong> this was not a mathematical proof of every instruction edge. It was a substantial practical verification harness built during the sprint: interpreter oracle, block-boundary lockstep, subsystem diagnostics, regression tests, and served-artifact smoke checks.</p></div>
+  <div class="table"><table><thead><tr><th>Capability</th><th>Status</th><th>Evidence</th></tr></thead><tbody>
+    <tr><td>Static-vs-hybrid architecture</td><td class="good">Implemented</td><td>Fixed-bank code can run as lifted WASM; banked/unsafe regions route through live interpretation.</td></tr>
+    <tr><td>Instruction validation</td><td class="good">Substantial targeted coverage</td><td>Decoder, ALU, CPU, branch, stack, register, and bug-regression tests.</td></tr>
+    <tr><td>Hardware validation</td><td class="good">Subsystem probes</td><td>DMA/OAM, interrupts, LY/timing, HRAM/MMU, APU, save-system, and browser-frame tests.</td></tr>
+    <tr><td>ROM breadth</td><td class="warn">Future work</td><td>The result is demonstrated around Pokémon Red / MBC3. Broader GB/GBC compatibility requires a ROM corpus and additional hardware support.</td></tr>
+    <tr><td>Bank-specialized recompilation</td><td class="warn">Future work</td><td>The current design uses interpreter fallback for banked/unsafe code. Specializing lifted blocks by mapper context is a clear next step.</td></tr>
+    <tr><td>Independent reproduction</td><td class="warn">Packaging step</td><td>The repo, tests, reports, and local artifacts exist; publication should include a clean-checkout guide and independent verification pass.</td></tr>
+  </tbody></table></div>
+</section>
+
+<section class="card" id="debugging">
+  <div class="kicker">06 · Where it got stuck</div><h2 class="title">The scientific part was mostly falsifying wrong explanations.</h2>
+  <p class="lead">The project became playable only after comparing hybrid WASM execution against a pure interpreter and repeatedly isolating the first divergence.</p>
+  <div class="grid two">
+    <div class="mini"><h4 class="bug">False lead: HRAM execution</h4><p>The machine crashed at <code>0xFF80</code>, and HRAM was zeros. At first this looked like a missing HRAM-lift problem. The interpreter revealed the truth: HRAM was a symptom, not the first cause.</p></div>
+    <div class="mini"><h4 class="warn">Lockstep trap</h4><p>Comparing interpreter mid-instruction/block state against WASM block-end state produced false divergences. The comparison had to be at equivalent block boundaries.</p></div>
+    <div class="mini"><h4 class="bug">Decoder C bug</h4><p>Register C was parsed as condition C for non-branch instructions. This broke copy loops and HRAM/OAM setup. Fix: only parse conditions for control-flow mnemonics.</p></div>
+    <div class="mini"><h4 class="good">Correctness escape hatch</h4><p>Non-fixed-ROM regions are interpreted: switchable bank window and RAM-resident code. This avoids lifting stale bytes from banks/RAM that change at runtime.</p></div>
+  </div>
+  <pre><code>// key guard idea
+const inFixedRom = pc < 0x4000;
+if (!inFixedRom) {
+  // execute live bytes through interpreter
+  // because banked ROM/RAM/HRAM are not safe static-lift targets
+}</code></pre>
+</section>
+
+<section class="card" id="graphics">
+  <div class="kicker">07 · Graphics: the invisible-NPC breakthrough</div><h2 class="title">Background worked. Sprites were gone. That meant OAM DMA.</h2>
+  <p>The overworld was visible and interactive, but the player, Professor Oak, NPCs, and many object sprites were invisible. That symptom points directly to OBJ sprites. The sprite renderer was already present, but OAM was empty.</p>
+  <blockquote>Pokémon writes <code>0xC3</code> to <code>FF46</code> every frame, asking the hardware to copy <code>0xC300–0xC39F</code> into OAM. The MMU originally treated <code>FF46</code> as an ordinary IO byte.</blockquote>
+  <pre><code>if (addr === 0xff46) {
+  const src = (value & 0xff) << 8;
+  for (let i = 0; i < 0xa0; i++) {
+    this.oam[i] = this.read((src + i) & 0xffff);
+  }
+}</code></pre>
+  <p>After that, OAM went from <code>0/160</code> non-zero bytes to live sprite tables, and the player/NPCs/Poké Balls returned.</p>
+</section>
+
+<section class="card" id="saveaudio">
+  <div class="kicker">08 · Save system + audio</div><h2 class="title">Battery saves are not save-states. Both were needed.</h2>
+  <div class="grid two"><div class="mini"><h4>Battery save</h4><p>In-game SAVE writes to cartridge SRAM. The browser autosaves that SRAM to IndexedDB and can import/export standard <code>.sav</code> files.</p></div><div class="mini"><h4>Save-state</h4><p>Snapshots CPU registers, MMU memory, banking state, PPU timing, and timer counters. Slots have overwrite protection.</p></div></div>
+  <p>Later, an <strong>auto checkpoint</strong> was added: when SRAM persistence happens, the system also writes a protected save-state that does not overwrite manual slots 1/2/3.</p>
+  <p>Audio was implemented as a pragmatic DMG APU: two square channels, one wave channel, one noise channel, envelopes, sweep, panning, master volume, and a WebAudio worklet ring buffer.</p>
+</section>
+
+<section class="card" id="frontend">
+  <div class="kicker">09 · Presentation layer</div><h2 class="title">The frontend became an experimental instrument.</h2>
+  <p>The 2D frontend started as a canvas and became a themed, save-aware emulator surface. The 3D frontend uses the same recompiled machine, but binds the framebuffer to a <code>THREE.CanvasTexture</code> on a modeled Game Boy screen.</p>
+  <div class="diagram">Live machine framebuffer
+        │
+        ▼
+  offscreen 160×144 canvas
+        │ CanvasTexture (NearestFilter)
+        ▼
+  3D Game Boy screen plane
+        │
+        ▼
+  same joypad + audio + save runtime</div>
+  <p>The transparent themes later motivated internal details: a PCB, chips, traces, batteries, and double-sided circuitry visible through the shell. The UI went through many tactile corrections: D-pad direction signs, press depth, A/B scale, shell chamfer/rounding, and theme names.</p>
+</section>
+
+<section class="card" id="results">
+  <div class="kicker">10 · Results</div><h2 class="title">What works now</h2>
+  <div class="table"><table><thead><tr><th>Feature</th><th>Status</th><th>Note</th></tr></thead><tbody>
+    <tr><td>CPU execution</td><td class="good">Working</td><td>Hybrid WASM + interpreter fallback.</td></tr>
+    <tr><td>World rendering</td><td class="good">Working</td><td>BG/window tile rendering in PPU.</td></tr>
+    <tr><td>Sprites</td><td class="good">Working</td><td>Fixed via OAM DMA.</td></tr>
+    <tr><td>Input</td><td class="good">Working</td><td>Keyboard, touch controls, 3D clickable controls.</td></tr>
+    <tr><td>Battery save</td><td class="good">Working</td><td>IndexedDB + import/export <code>.sav</code>.</td></tr>
+    <tr><td>Save-states</td><td class="good">Working</td><td>Manual slots + auto checkpoint.</td></tr>
+    <tr><td>Sound</td><td class="good">Working</td><td>4-channel APU + AudioWorklet.</td></tr>
+    <tr><td>3D presentation</td><td class="good">Working</td><td>Live game on 3D Game Boy screen.</td></tr>
+    <tr><td>Verification harness</td><td class="good">Substantial</td><td>Interpreter oracle, lockstep/divergence tests, decoder/ALU/CPU tests, DMA/APU/save tests, and runtime smoke checks.</td></tr>
+  </tbody></table></div>
+</section>
+
+<section class="card" id="limits">
+  <div class="kicker">14 · Boundaries and next research steps</div><h2 class="title">The honest boundary: impressive integration, not yet a fully general verified recompiler.</h2>
+  <p class="lead">The current system is a powerful applied demonstration centered on Pokémon Red and DMG-era Game Boy behavior. A broader research platform would require expanded compatibility, stronger equivalence guarantees, independent reproduction, and a public corpus-driven evaluation process.</p>
+  <div class="grid two">
+    <div class="mini"><h4>Generalization</h4><p>The system is proven around Pokémon Red / MBC3. A general GB/GBC framework would need systematic support across many ROMs, mappers, and hardware variants.</p></div>
+    <div class="mini"><h4>Banked code</h4><p>The hybrid fallback is pragmatic and correctness-minded. A more advanced translator would model bank context automatically and specialize blocks by mapper state.</p></div>
+    <div class="mini"><h4>Equivalence</h4><p>The project used interpreter oracles and targeted diagnostics, not a formal proof of instruction/block equivalence. Formal or near-formal semantics remain a natural next step.</p></div>
+    <div class="mini"><h4>Reproducibility</h4><p>The local source, tests, and artifact exist. A public release should include clean-checkout instructions, ROM-path configuration, test commands, and independent audit notes.</p></div>
+  </div>
+  <p>The important nuance is that these boundaries do not diminish the engineering result. The build already includes an interpreter oracle, lockstep debugging, targeted instruction tests, OAM DMA tests, APU tests, save-state tests, banking diagnostics, hybrid static/dynamic execution, and a clear static-vs-hybrid architecture. It is a high-frontier autonomous systems-engineering artifact and a concrete foundation for a broader ROM-to-WASM research program.</p>
+</section>
+
+<section class="card" id="lessons">
+  <div class="kicker">11 · Lessons for researchers</div><h2 class="title">What this project taught us</h2>
+  <ol>
+    <li><strong>Static recompilation needs dynamic humility.</strong> The fixed ROM bank can be lifted; banked ROM and RAM-resident code require live interpretation unless the bank/context is modeled.</li>
+    <li><strong>Block-level comparison can lie.</strong> Compare interpreter and recompiled state at equivalent semantic boundaries, not convenient PCs.</li>
+    <li><strong>Hardware side effects are the game.</strong> <code>FF46</code> OAM DMA was a tiny missing detail with a huge visible symptom.</li>
+    <li><strong>Token ambiguity matters.</strong> One decoder rule for <code>C</code> broke copy loops and cascaded into phantom runtime failures.</li>
+    <li><strong>The frontend is not decoration.</strong> Save UX, overwrite guards, themes, 3D affordances, and clear panels made the experiment usable enough to test.</li>
+    <li><strong>The revolution is in the operating model.</strong> The notable shift is an agent closing the loop from low-level binary debugging to polished artifact, not any single subsystem in isolation.</li>
+  </ol>
+  <blockquote>The most valuable debugging move was not writing more code. It was building smaller oracles: pure interpreter runs, OAM dumps, HRAM dumps, block-boundary lockstep, and narrowly targeted tests.</blockquote>
+</section>
+
+<div class="footer">Generated for gb-recomp · 2026-06-02 · ROM bytes → SM83 decode → WASM blocks → JS Game Boy hardware runtime</div>
+</main>
+</div>
+<script>
+// Iframe-safe internal navigation: do not rely on location.hash, because srcdoc/iframe
+// renderers can swallow or remap hash navigation. Intercept every #tag link and scroll by JS.
+(function(){
+  const allHashLinks = [...document.querySelectorAll('a[href^="#"]')];
+  const navLinks = [...document.querySelectorAll('nav a[href^="#"]')];
+  const sections = navLinks.map(a => document.querySelector(a.getAttribute('href'))).filter(Boolean);
+
+  function setActive(id){
+    navLinks.forEach(a => a.classList.toggle('active', a.getAttribute('href') === '#' + id));
+  }
+
+  function scrollToId(id){
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setActive(id);
+  }
+
+  allHashLinks.forEach(a => {
+    a.addEventListener('click', (e) => {
+      const href = a.getAttribute('href') || '';
+      if (!href.startsWith('#') || href.length <= 1) return;
+      e.preventDefault();
+      scrollToId(decodeURIComponent(href.slice(1)));
+    });
+  });
+
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting && entry.target.id) setActive(entry.target.id);
+    });
+  }, { rootMargin: '-35% 0px -55%' });
+  sections.forEach(section => obs.observe(section));
+
+  function updateProgress(){
+    const h = document.documentElement;
+    const progress = document.getElementById('progress');
+    if (!progress) return;
+    const denom = Math.max(1, h.scrollHeight - h.clientHeight);
+    progress.style.width = ((h.scrollTop / denom) * 100) + '%';
+  }
+  addEventListener('scroll', updateProgress, { passive: true });
+  updateProgress();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>gb-recomp · 3D model · SM83 → WebAssembly</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#e8e8f0; --muted:#8a8aa0; --accent:#e53d8f; --accent2:#12e0ff; --good:#19ef83;
+    --surface:rgba(18,18,28,.66); --border:rgba(120,120,160,.2);
+    --mono:'JetBrains Mono',ui-monospace,monospace; --display:'Space Grotesk',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:#05060a;color:var(--ink);font-family:var(--display)}
+  #gl{position:fixed;inset:0;z-index:0}
+  #gl canvas{display:block;touch-action:none}
+  .topbar{position:fixed;top:20px;left:24px;z-index:10;max-width:440px;animation:rise .8s cubic-bezier(.22,1,.36,1) both}
+  .badge{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;
+    color:var(--accent2);border:1px solid var(--border);background:var(--surface);
+    padding:5px 12px;border-radius:999px;letter-spacing:.1em;text-transform:uppercase;backdrop-filter:blur(14px)}
+  .badge .dot{width:7px;height:7px;border-radius:50%;background:var(--good);box-shadow:0 0 10px var(--good);animation:pulse 2s infinite}
+  h1{font-size:clamp(20px,3vw,30px);margin:14px 0 6px;font-weight:700;letter-spacing:-.03em;line-height:1.05}
+  h1 .arrow{color:var(--accent)}
+  .sub{color:var(--muted);font-size:13px;line-height:1.6;margin:0}
+  #rominfo{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:10px}
+  #rominfo b{color:var(--ink)}
+  .credit{font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:8px;opacity:.7}
+  .credit a{color:var(--muted)}
+  .hud{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:10;display:flex;gap:10px;
+    padding:10px 14px;border:1px solid var(--border);border-radius:999px;background:var(--surface);
+    backdrop-filter:blur(16px);box-shadow:0 12px 40px rgba(0,0,0,.5);align-items:center;
+    animation:rise .8s .1s cubic-bezier(.22,1,.36,1) both}
+  .hud .stat{font-family:var(--mono);font-size:11px;color:var(--muted);padding:0 6px}
+  .hud .stat #status{color:var(--good)} .hud .stat #fps{color:var(--accent2)}
+  .hbtn{font-family:var(--mono);font-size:11px;color:var(--ink);background:rgba(40,40,60,.6);
+    border:1px solid var(--border);border-radius:999px;padding:8px 14px;cursor:pointer;transition:.15s}
+  .hbtn:hover{border-color:var(--accent2);color:var(--accent2)}
+  .hbtn:active{transform:translateY(1px)}
+  .sep{width:1px;height:20px;background:var(--border)}
+  .hint{position:fixed;top:20px;right:24px;z-index:10;font-family:var(--mono);font-size:11px;color:var(--muted);
+    text-align:right;line-height:1.9;background:var(--surface);border:1px solid var(--border);
+    padding:12px 16px;border-radius:14px;backdrop-filter:blur(14px);animation:rise .8s .15s cubic-bezier(.22,1,.36,1) both}
+  .hint kbd{background:rgba(40,40,60,.7);border:1px solid var(--border);border-radius:4px;padding:1px 6px;color:var(--ink)}
+  .hint .lead{color:var(--accent2)}
+  .links{position:fixed;bottom:24px;right:24px;z-index:10;font-family:var(--mono);font-size:11px;display:flex;gap:8px;flex-direction:column;align-items:flex-end}
+  .links a{color:var(--muted);text-decoration:none;border:1px solid var(--border);background:var(--surface);
+    padding:8px 14px;border-radius:999px;backdrop-filter:blur(14px);transition:.15s}
+  .links a:hover{color:var(--accent2);border-color:var(--accent2)}
+  @keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important}}
+  @media (max-width:640px){.hint{display:none}.topbar{max-width:60vw}}
+</style>
+</head>
+<body>
+  <div id="gl"></div>
+
+  <div class="topbar">
+    <div class="badge"><span class="dot"></span> Recompiled · SM83 → WASM · GLB model</div>
+    <h1>gb&#8209;recomp <span class="arrow">▸</span> 3D model edition</h1>
+    <p class="sub">A downloaded Game&nbsp;Boy 3D model with the <b>live recompiled game compositied onto its screen</b>. Drag to orbit, scroll to zoom, click the buttons.</p>
+    <div id="rominfo">reading cartridge…</div>
+    <div class="credit">Model: “Game Boy” by Marcel Neumann · <a href="https://creativecommons.org/licenses/by/3.0/" target="_blank">CC-BY 3.0</a> · via poly.pizza</div>
+  </div>
+
+  <div class="hint">
+    <span class="lead">CONTROLS</span><br>
+    <kbd>↑↓←→</kbd> move · <kbd>Z</kbd>A · <kbd>X</kbd>B<br>
+    <kbd>Enter</kbd> Start · <kbd>Shift</kbd> Select<br>
+    drag = orbit · scroll = zoom · click buttons
+  </div>
+
+  <div class="hud">
+    <span class="stat" id="status">loading…</span>
+    <span class="sep"></span>
+    <span class="stat" id="fps">— fps</span>
+    <span class="sep"></span>
+    <button class="hbtn" id="btn-sound">🔇 Sound</button>
+    <button class="hbtn" id="btn-rotate">↻ Auto-spin</button>
+    <button class="hbtn" id="btn-reset">⌖ Reset view</button>
+  </div>
+
+  <div class="links">
+    <a href="/web/3d.html">◧ custom-built 3D</a>
+    <a href="/">← 2D version</a>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+    import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+    window.THREE = THREE;
+    window.OrbitControls = OrbitControls;
+    window.GLTFLoader = GLTFLoader;
+    await import("/web/js/browser/gb3d_model.js");
+  </script>
+</body>
+</html>

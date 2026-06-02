@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="midnight">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>gb-recomp · SM83 → WebAssembly</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     THEME SYSTEM — each theme overrides a small set of tokens.
+     ============================================================ */
+  :root{
+    /* structural tokens (shared) */
+    --radius-lg:24px; --radius-md:12px; --radius-sm:8px;
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+    --display:'Space Grotesk',ui-sans-serif,system-ui,sans-serif;
+    --pixel:'Press Start 2P',monospace;
+    --ease:cubic-bezier(.22,1,.36,1);
+    /* default = MIDNIGHT */
+    --bg:#0b0b14; --bg2:#070710;
+    --surface:rgba(20,20,31,.72); --surface2:rgba(28,28,43,.72);
+    --border:rgba(120,120,160,.18); --border-strong:rgba(120,120,160,.34);
+    --ink:#e8e8f0; --muted:#8a8aa0;
+    --accent:#e53d8f; --accent2:#12e0ff; --good:#19ef83;
+    --glow:rgba(229,61,143,.45);
+    --bg-image:none; --bg-image-opacity:0; --bg-blur:0px;
+    --screen-bg:#9bbc0f; --bezel:#0a0a0f;
+    --glass-blur:18px;
+  }
+
+  /* PIKACHU — electric yellow + cobalt blue */
+  [data-theme="pikachu"]{
+    --bg:#0a1330; --bg2:#060b20;
+    --surface:rgba(14,28,68,.62); --surface2:rgba(20,40,92,.6);
+    --border:rgba(255,213,0,.22); --border-strong:rgba(255,213,0,.5);
+    --ink:#fdfdf2; --muted:#9fb0e0;
+    --accent:#ffd500; --accent2:#3b6dff; --good:#9bff3b;
+    --glow:rgba(255,213,0,.55);
+    --bg-image:url('/web/bg/pikachu.jpg'); --bg-image-opacity:.42; --bg-blur:2px;
+    --screen-bg:#cfe34a; --bezel:#0a142e;
+  }
+
+  /* ATOMIC PURPLE — translucent glassmorphism */
+  [data-theme="atomic"]{
+    --bg:#120821; --bg2:#0a0418;
+    --surface:rgba(60,20,110,.34); --surface2:rgba(86,30,150,.3);
+    --border:rgba(190,120,255,.28); --border-strong:rgba(190,120,255,.55);
+    --ink:#f3e9ff; --muted:#b79fd6;
+    --accent:#c061ff; --accent2:#ff5cc8; --good:#5cffd6;
+    --glow:rgba(192,97,255,.6);
+    --bg-image:url('/web/bg/atomic.jpg'); --bg-image-opacity:.5; --bg-blur:1px;
+    --screen-bg:#b8e0c0; --bezel:rgba(30,10,55,.6);
+    --glass-blur:30px;
+  }
+
+  /* GRASS — classic Game Boy dot-matrix / green */
+  [data-theme="grass"]{
+    --bg:#171c10; --bg2:#0d1109;
+    --surface:rgba(34,42,24,.74); --surface2:rgba(46,56,32,.72);
+    --border:rgba(155,188,15,.22); --border-strong:rgba(155,188,15,.5);
+    --ink:#d8e8b0; --muted:#8a9a64;
+    --accent:#9bbc0f; --accent2:#cfe34a; --good:#9bbc0f;
+    --glow:rgba(155,188,15,.45);
+    --bg-image:url('/web/bg/dmg.jpg'); --bg-image-opacity:.4; --bg-blur:2px;
+    --screen-bg:#9bbc0f; --bezel:#0a0d06;
+  }
+
+  /* FIRE — ember orange + obsidian */
+  [data-theme="fire"]{
+    --bg:#1a0b06; --bg2:#0e0503;
+    --surface:rgba(48,18,8,.66); --surface2:rgba(70,26,12,.62);
+    --border:rgba(255,140,40,.24); --border-strong:rgba(255,140,40,.52);
+    --ink:#ffeede; --muted:#c79a82;
+    --accent:#ff7a18; --accent2:#ffd23b; --good:#5cd0ff;
+    --glow:rgba(255,122,24,.55);
+    --bg-image:none; --bg-image-opacity:0; --bg-blur:0px;
+    --screen-bg:#e0c14a; --bezel:#0e0503;
+  }
+
+  /* WATER — transparent blue / aquatic glass */
+  [data-theme="water"]{
+    --bg:#06172b; --bg2:#020814;
+    --surface:rgba(18,78,130,.46); --surface2:rgba(12,110,180,.34);
+    --border:rgba(93,207,255,.28); --border-strong:rgba(93,207,255,.58);
+    --ink:#e6f8ff; --muted:#91bdd4;
+    --accent:#5dcfff; --accent2:#1b7dff; --good:#6fffe2;
+    --glow:rgba(93,207,255,.55);
+    --bg-image:none; --bg-image-opacity:0; --bg-blur:0px;
+    --screen-bg:#b6e9ff; --bezel:#06172b;
+    --glass-blur:28px;
+  }
+
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%}
+  body{
+    color:var(--ink);
+    font-family:var(--display);
+    display:flex;flex-direction:column;align-items:center;
+    min-height:100vh;padding:32px 16px 56px;gap:24px;
+    position:relative;overflow-x:hidden;
+    transition:color .4s var(--ease);
+  }
+  /* layered animated background */
+  body::before,body::after{content:"";position:fixed;inset:0;z-index:-2;pointer-events:none}
+  body::before{
+    background:
+      radial-gradient(1200px 620px at 72% -12%, var(--glow), transparent 58%),
+      radial-gradient(900px 520px at 8% 112%, color-mix(in srgb,var(--accent2) 30%, transparent), transparent 60%),
+      linear-gradient(180deg,var(--bg),var(--bg2));
+    transition:background .5s var(--ease);
+  }
+  body::after{
+    background:var(--bg-image) center/cover no-repeat;
+    opacity:var(--bg-image-opacity);
+    filter:blur(var(--bg-blur)) saturate(1.05);
+    transition:opacity .6s var(--ease), filter .6s var(--ease);
+  }
+  /* subtle grain */
+  .grain{position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  /* ---- THEME SWITCHER (top-right floating) ---- */
+  .themebar{
+    position:fixed;top:16px;right:16px;z-index:30;display:flex;gap:8px;
+    padding:8px;border:1px solid var(--border);border-radius:999px;
+    background:var(--surface);backdrop-filter:blur(var(--glass-blur));
+    box-shadow:0 8px 28px rgba(0,0,0,.4);
+  }
+  .swatch{
+    width:26px;height:26px;border-radius:50%;cursor:pointer;border:2px solid transparent;
+    transition:transform .2s var(--ease),border-color .2s;position:relative;overflow:hidden;
+    background-clip:padding-box;
+  }
+  .swatch::before{content:"";position:absolute;inset:0;border-radius:50%;background:var(--swatch);}
+  .swatch:hover{transform:scale(1.15)}
+  .swatch[aria-pressed="true"]{border-color:var(--ink)}
+  .swatch.midnight{--swatch:linear-gradient(135deg,#d8d4ca,#7a766e)}
+  .swatch.pikachu{--swatch:linear-gradient(135deg,#ffd500 50%,#3b6dff 50%)}
+  .swatch.atomic{--swatch:radial-gradient(circle at 35% 35%,#ff5cc8,#c061ff 70%)}
+  .swatch.grass{--swatch:linear-gradient(135deg,#9bbc0f,#0d1109)}
+  .swatch.fire{--swatch:linear-gradient(135deg,#ff7a18,#ffd23b)}
+  .swatch.water{--swatch:radial-gradient(circle at 35% 30%,#d8fbff,#5dcfff 45%,#0b46a8 100%)}
+
+  /* ---- HEADER ---- */
+  header{text-align:center;max-width:760px;animation:rise .7s var(--ease) both}
+  .badge{
+    display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;
+    color:var(--accent2);border:1px solid var(--border);background:var(--surface);
+    padding:5px 14px;border-radius:999px;letter-spacing:.1em;margin-bottom:18px;
+    backdrop-filter:blur(var(--glass-blur));text-transform:uppercase;
+  }
+  .badge .dot{width:7px;height:7px;border-radius:50%;background:var(--good);box-shadow:0 0 10px var(--good);animation:pulse 2s infinite}
+  h1{font-size:clamp(26px,4vw,38px);margin:0 0 10px;font-weight:700;letter-spacing:-.03em;line-height:1.05}
+  h1 .arrow{color:var(--accent)}
+  .sub{color:var(--muted);font-size:14px;line-height:1.65;margin:0;max-width:620px}
+  .sub b{color:var(--ink)}
+
+  /* ---- CONSOLE ---- */
+  .console{
+    background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);
+    padding:24px;backdrop-filter:blur(var(--glass-blur));
+    box-shadow:0 28px 80px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.05);
+    display:flex;flex-direction:column;align-items:center;gap:16px;max-width:520px;width:100%;
+    animation:rise .7s .1s var(--ease) both;
+  }
+  .screen-frame{
+    background:var(--bezel);border:1px solid var(--border-strong);border-radius:var(--radius-md);
+    padding:16px;width:100%;display:flex;justify-content:center;position:relative;
+    box-shadow:inset 0 2px 18px rgba(0,0,0,.7);
+  }
+  .screen-frame::after{content:"";position:absolute;inset:16px;border-radius:6px;pointer-events:none;
+    box-shadow:inset 0 0 0 1px rgba(0,0,0,.4), inset 0 0 30px rgba(0,0,0,.35)}
+  canvas{
+    image-rendering:pixelated;width:100%;max-width:440px;height:auto;aspect-ratio:160/144;
+    background:var(--screen-bg);border-radius:4px;display:block;transition:background .4s var(--ease);
+  }
+  .statusbar{display:flex;justify-content:space-between;align-items:center;width:100%;
+    font-family:var(--mono);font-size:12px;color:var(--muted)}
+  .statusbar #status{color:var(--good)}
+  .statusbar #fps{color:var(--accent2)}
+  #rominfo{font-family:var(--mono);font-size:11px;color:var(--muted);text-align:center;line-height:1.7}
+  #rominfo b{color:var(--ink)}
+
+  /* ---- SETTINGS DRAWER (collapsible) ---- */
+  .settings-toggle{
+    margin-top:16px;
+    display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;
+    letter-spacing:.08em;color:var(--ink);background:var(--surface2);border:1px solid var(--border);
+    border-radius:999px;padding:8px 16px;cursor:pointer;transition:all .2s var(--ease);
+  }
+  .settings-toggle:hover{border-color:var(--accent2);color:var(--accent2)}
+  .settings-toggle .chev{transition:transform .3s var(--ease)}
+  .settings-toggle[aria-expanded="true"] .chev{transform:rotate(180deg)}
+
+  .savebar{
+    width:100%;display:grid;gap:10px;padding:0 14px;border:1px solid var(--border);
+    border-radius:var(--radius-md);background:var(--surface2);overflow:hidden;
+    max-height:0;opacity:0;padding-top:0;padding-bottom:0;
+    transition:max-height .45s var(--ease),opacity .35s var(--ease),padding .45s var(--ease);
+  }
+  .savebar.open{max-height:520px;opacity:1;padding-top:14px;padding-bottom:14px}
+  .saverow{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  .savelabel{font-family:var(--mono);font-size:9px;letter-spacing:.14em;color:var(--muted);min-width:56px}
+  .savestat{font-family:var(--mono);font-size:11px;color:var(--accent2);margin-right:auto}
+  .savebtn{font-family:var(--mono);font-size:11px;color:var(--ink);background:var(--surface);
+    border:1px solid var(--border);border-radius:var(--radius-sm);padding:7px 13px;cursor:pointer;
+    transition:background .15s,border-color .15s,transform .1s,opacity .15s}
+  .savebtn:hover{border-color:var(--accent2)}
+  .savebtn:active{transform:translateY(1px)}
+  .savebtn:disabled{opacity:.4;cursor:not-allowed;border-color:var(--border)}
+  .savebtn.slot[data-state-save]{border-color:var(--border-strong)}
+  .savebtn.slot[data-state-save]:hover{border-color:var(--accent)}
+  .savebtn.slot.confirm{border-color:#ff5252;color:#ff8a8a;background:rgba(255,82,82,.12);animation:nudge .4s var(--ease)}
+  @keyframes nudge{0%,100%{transform:none}25%{transform:translateX(-2px)}75%{transform:translateX(2px)}}
+  .savetoast{font-family:var(--mono);font-size:11px;min-height:16px;color:var(--good);transition:opacity .3s;opacity:0}
+  .savetoast.show{opacity:1}
+
+  /* ---- CONTROLS ---- */
+  .controls{display:grid;grid-template-columns:1fr 1fr;gap:24px;width:100%;margin-top:4px;align-items:center}
+  .dpad{position:relative;width:132px;height:132px;justify-self:center}
+  .dpad button{position:absolute;background:var(--surface2);border:1px solid var(--border);color:var(--muted);
+    width:44px;height:44px;font-size:14px;cursor:pointer;user-select:none;touch-action:none;transition:.1s}
+  .dpad button:active{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .dpad .up{top:0;left:44px;border-radius:8px 8px 0 0}
+  .dpad .down{bottom:0;left:44px;border-radius:0 0 8px 8px}
+  .dpad .left{left:0;top:44px;border-radius:8px 0 0 8px}
+  .dpad .right{right:0;top:44px;border-radius:0 8px 8px 0}
+  .dpad .center{left:44px;top:44px;background:var(--surface);border:1px solid var(--border)}
+  .ab{display:flex;gap:16px;justify-self:center;align-items:center}
+  .ab button{width:60px;height:60px;border-radius:50%;background:var(--surface2);border:1px solid var(--border);
+    color:var(--accent);font-weight:700;font-size:18px;cursor:pointer;user-select:none;touch-action:none;transition:.1s}
+  .ab button:active{background:var(--accent);color:#fff}
+  .startsel{display:flex;gap:16px;grid-column:1/3;justify-content:center;margin-top:4px}
+  .startsel button{background:var(--surface2);border:1px solid var(--border);color:var(--muted);
+    border-radius:16px;padding:8px 18px;font-family:var(--mono);font-size:11px;cursor:pointer;
+    user-select:none;touch-action:none;letter-spacing:.08em;transition:.1s}
+  .startsel button:active{background:var(--accent2);color:#000}
+
+  .keyhint{font-family:var(--mono);font-size:11px;color:var(--muted);text-align:center;line-height:1.9;max-width:520px;
+    animation:rise .7s .2s var(--ease) both}
+  .keyhint kbd{background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:1px 6px;color:var(--ink)}
+  footer{color:var(--muted);font-size:12px;text-align:center;max-width:620px;line-height:1.6;animation:rise .7s .25s var(--ease) both}
+  a{color:var(--accent2)}
+
+  @keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+  <div class="grain"></div>
+
+  <!-- THEME SWITCHER -->
+  <a href="/web/3d.html" style="position:fixed;top:16px;left:16px;z-index:30;font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--ink);text-decoration:none;border:1px solid var(--border);background:var(--surface);backdrop-filter:blur(var(--glass-blur));padding:9px 15px;border-radius:999px;transition:all .2s var(--ease)" onmouseover="this.style.borderColor='var(--accent2)';this.style.color='var(--accent2)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--ink)'">◧ 3D console →</a>
+
+  <div class="themebar" role="group" aria-label="Theme">
+    <div class="swatch midnight" data-theme-set="midnight" title="Original" aria-pressed="true"></div>
+    <div class="swatch pikachu"  data-theme-set="pikachu"  title="Pikachu Edition" aria-pressed="false"></div>
+    <div class="swatch atomic"   data-theme-set="atomic"   title="Atomic Purple" aria-pressed="false"></div>
+    <div class="swatch grass"    data-theme-set="grass"    title="Grass" aria-pressed="false"></div>
+    <div class="swatch fire"     data-theme-set="fire"     title="Fire" aria-pressed="false"></div>
+    <div class="swatch water"    data-theme-set="water"    title="Water" aria-pressed="false"></div>
+  </div>
+
+  <header>
+    <div class="badge"><span class="dot"></span> Recompiled · SM83 → WASM · live in your browser</div>
+    <h1>gb&#8209;recomp <span class="arrow">▸</span> playing recompiled WebAssembly</h1>
+    <p class="sub">This isn't an emulator running a ROM. The game's own Sharp&nbsp;SM83 machine code was
+    <b>statically recompiled into WebAssembly</b> on the server, then executed natively in V8 in this tab.
+    The hardware (PPU, timers, joypad, APU) is a JS runtime around it.</p>
+  </header>
+
+  <div class="console">
+    <div class="screen-frame">
+      <canvas id="screen" width="160" height="144"></canvas>
+    </div>
+    <div class="statusbar">
+      <span id="status">loading…</span>
+      <span id="fps">— fps</span>
+    </div>
+    <div id="rominfo">reading cartridge…</div>
+
+    <!-- collapsible settings -->
+    <button class="settings-toggle" id="settings-toggle" aria-expanded="false" aria-controls="savebar">
+      ⚙ Settings &amp; Saves <span class="chev">▾</span>
+    </button>
+
+    <div class="savebar" id="savebar">
+      <div class="saverow">
+        <span class="savelabel">BATTERY</span>
+        <span id="battstatus" class="savestat">—</span>
+        <button id="btn-save-now" class="savebtn" title="Force-write SRAM to this browser now">Save&nbsp;now</button>
+        <button id="btn-export-sav" class="savebtn" title="Download a standard .sav file">Export&nbsp;.sav</button>
+        <button id="btn-import-sav" class="savebtn" title="Load a .sav file from disk">Import&nbsp;.sav</button>
+      </div>
+      <div class="saverow">
+        <span class="savelabel">SOUND</span>
+        <button id="btn-sound" class="savebtn" title="Toggle audio (click anywhere first to enable)">🔇 Click to enable</button>
+        <span class="savestat">4-channel APU · press M to mute</span>
+      </div>
+      <div class="saverow">
+        <span class="savelabel">AUTO</span>
+        <span id="autostatus" class="savestat">none yet</span>
+        <button id="btn-load-auto" class="savebtn" disabled title="Load the automatic checkpoint created when the in-game SAVE persists">Load auto checkpoint</button>
+      </div>
+      <div class="saverow">
+        <span class="savelabel">STATE</span>
+        <button class="savebtn slot" data-state-save="0">Save&nbsp;1</button>
+        <button class="savebtn slot" data-state-load="0" disabled>Load&nbsp;1</button>
+        <button class="savebtn slot" data-state-save="1">Save&nbsp;2</button>
+        <button class="savebtn slot" data-state-load="1" disabled>Load&nbsp;2</button>
+        <button class="savebtn slot" data-state-save="2">Save&nbsp;3</button>
+        <button class="savebtn slot" data-state-load="2" disabled>Load&nbsp;3</button>
+      </div>
+      <div id="savetoast" class="savetoast"></div>
+    </div>
+
+    <div class="controls">
+      <div class="dpad">
+        <button class="up" data-btn="up">▲</button>
+        <button class="left" data-btn="left">◀</button>
+        <button class="center"></button>
+        <button class="right" data-btn="right">▶</button>
+        <button class="down" data-btn="down">▼</button>
+      </div>
+      <div class="ab">
+        <button data-btn="b">B</button>
+        <button data-btn="a">A</button>
+      </div>
+      <div class="startsel">
+        <button data-btn="select">SELECT</button>
+        <button data-btn="start">START</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="keyhint">
+    <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> move &nbsp;·&nbsp;
+    <kbd>Z</kbd> A &nbsp;·&nbsp; <kbd>X</kbd> B &nbsp;·&nbsp;
+    <kbd>Enter</kbd> Start &nbsp;·&nbsp; <kbd>Shift</kbd> Select<br>
+    <kbd>F5</kbd>/<kbd>F6</kbd>/<kbd>F7</kbd> quick-save 1/2/3 &nbsp;·&nbsp;
+    <kbd>F8</kbd>/<kbd>F9</kbd>/<kbd>F10</kbd> quick-load 1/2/3 &nbsp;·&nbsp; <kbd>M</kbd> mute
+  </div>
+
+  <footer>
+    The recompiler reads your own local ROM only to discover its control-flow graph and emit a
+    WASM module of your own copy, for your own use. Boot ROM is skipped via post-boot register seeding.
+  </footer>
+
+  <script>
+    // ---- Theme switcher (persisted) ----
+    (function () {
+      const root = document.documentElement;
+      const normalizeTheme = (t) => t === "dmg" ? "grass" : (t === "charizard" ? "fire" : t);
+      const saved = normalizeTheme(localStorage.getItem("gb-theme"));
+      if (saved) { root.setAttribute("data-theme", saved); localStorage.setItem("gb-theme", saved); }
+      const swatches = document.querySelectorAll("[data-theme-set]");
+      const sync = (t) => swatches.forEach((s) =>
+        s.setAttribute("aria-pressed", String(s.dataset.themeSet === t)));
+      sync(root.getAttribute("data-theme"));
+      swatches.forEach((s) => s.addEventListener("click", () => {
+        const t = s.dataset.themeSet;
+        root.setAttribute("data-theme", t);
+        localStorage.setItem("gb-theme", t);
+        sync(t);
+      }));
+      // ---- Settings drawer ----
+      const toggle = document.getElementById("settings-toggle");
+      const bar = document.getElementById("savebar");
+      const openSaved = localStorage.getItem("gb-settings-open") === "1";
+      if (openSaved) { bar.classList.add("open"); toggle.setAttribute("aria-expanded", "true"); }
+      toggle.addEventListener("click", () => {
+        const open = bar.classList.toggle("open");
+        toggle.setAttribute("aria-expanded", String(open));
+        localStorage.setItem("gb-settings-open", open ? "1" : "0");
+      });
+    })();
+  </script>
+  <script type="module" src="/web/js/browser/main.js"></script>
+</body>
+</html>

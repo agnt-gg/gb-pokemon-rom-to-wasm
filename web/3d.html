@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>gb-recomp · 3D · SM83 → WebAssembly</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#e8e8f0; --muted:#8a8aa0; --accent:#e53d8f; --accent2:#12e0ff; --good:#19ef83;
+    --surface:rgba(18,18,28,.66); --border:rgba(120,120,160,.2);
+    --mono:'JetBrains Mono',ui-monospace,monospace; --display:'Space Grotesk',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:#05060a;color:var(--ink);font-family:var(--display)}
+  #gl{position:fixed;inset:0;z-index:0}
+  #gl canvas{display:block;touch-action:none}
+
+  /* top-left title */
+  .topbar{position:fixed;top:20px;left:24px;z-index:10;max-width:440px;animation:rise .8s cubic-bezier(.22,1,.36,1) both}
+  .badge{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;
+    color:var(--accent2);border:1px solid var(--border);background:var(--surface);
+    padding:5px 12px;border-radius:999px;letter-spacing:.1em;text-transform:uppercase;backdrop-filter:blur(14px)}
+  .badge .dot{width:7px;height:7px;border-radius:50%;background:var(--good);box-shadow:0 0 10px var(--good);animation:pulse 2s infinite}
+  h1{font-size:clamp(20px,3vw,30px);margin:14px 0 6px;font-weight:700;letter-spacing:-.03em;line-height:1.05}
+  h1 .arrow{color:var(--accent)}
+  .sub{color:var(--muted);font-size:13px;line-height:1.6;margin:0}
+  #rominfo{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:10px}
+  #rominfo b{color:var(--ink)}
+
+  /* bottom HUD */
+  .hud{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:10;display:flex;gap:10px;
+    padding:10px 14px;border:1px solid var(--border);border-radius:999px;background:var(--surface);
+    backdrop-filter:blur(16px);box-shadow:0 12px 40px rgba(0,0,0,.5);align-items:center;
+    animation:rise .8s .1s cubic-bezier(.22,1,.36,1) both}
+  .hud .stat{font-family:var(--mono);font-size:11px;color:var(--muted);padding:0 6px}
+  .hud .stat #status{color:var(--good)} .hud .stat #fps{color:var(--accent2)}
+  .hbtn{font-family:var(--mono);font-size:11px;color:var(--ink);background:rgba(40,40,60,.6);
+    border:1px solid var(--border);border-radius:999px;padding:8px 14px;cursor:pointer;transition:.15s}
+  .hbtn:hover{border-color:var(--accent2);color:var(--accent2)}
+  .hbtn:active{transform:translateY(1px)}
+  .sep{width:1px;height:20px;background:var(--border)}
+
+  /* hint top-right */
+  .hint{position:fixed;top:20px;right:24px;z-index:10;font-family:var(--mono);font-size:11px;color:var(--muted);
+    text-align:right;line-height:1.9;background:var(--surface);border:1px solid var(--border);
+    padding:12px 16px;border-radius:14px;backdrop-filter:blur(14px);animation:rise .8s .15s cubic-bezier(.22,1,.36,1) both}
+  .settings{position:fixed;right:24px;top:150px;z-index:11;width:min(420px,calc(100vw - 48px));font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .settings-toggle{margin-top:16px;width:100%;display:flex;justify-content:space-between;align-items:center;gap:8px;color:var(--ink);background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:10px 16px;cursor:pointer;backdrop-filter:blur(16px);box-shadow:0 8px 28px rgba(0,0,0,.35);transition:.15s}
+  .settings-toggle:hover{border-color:var(--accent2);color:var(--accent2)}
+  .settings-toggle .chev{transition:transform .25s}
+  .settings-toggle[aria-expanded="true"] .chev{transform:rotate(180deg)}
+  .savebar{margin-top:10px;display:grid;gap:10px;padding:0 14px;border:1px solid var(--border);border-radius:16px;background:var(--surface);backdrop-filter:blur(16px);overflow:hidden;max-height:0;opacity:0;padding-top:0;padding-bottom:0;transition:max-height .4s cubic-bezier(.22,1,.36,1),opacity .25s,padding .4s}
+  .savebar.open{max-height:520px;opacity:1;padding-top:14px;padding-bottom:14px}
+  .saverow{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.savelabel{font-size:9px;letter-spacing:.14em;color:var(--muted);min-width:56px}.savestat{font-size:11px;color:var(--accent2);margin-right:auto}
+  .savebtn{font-family:var(--mono);font-size:11px;color:var(--ink);background:rgba(40,40,60,.62);border:1px solid var(--border);border-radius:999px;padding:7px 12px;cursor:pointer;transition:.15s}.savebtn:hover{border-color:var(--accent2);color:var(--accent2)}.savebtn:disabled{opacity:.4;cursor:not-allowed}.savebtn.slot.confirm{border-color:#ff5252;color:#ff8a8a;background:rgba(255,82,82,.12);animation:nudge .4s}
+  .savetoast{min-height:16px;color:var(--good);opacity:0;transition:opacity .25s}.savetoast.show{opacity:1}
+  @keyframes nudge{0%,100%{transform:none}25%{transform:translateX(-2px)}75%{transform:translateX(2px)}}
+  .hint kbd{background:rgba(40,40,60,.7);border:1px solid var(--border);border-radius:4px;padding:1px 6px;color:var(--ink)}
+  .hint .lead{color:var(--accent2)}
+  .links{position:fixed;bottom:24px;right:24px;z-index:10;font-family:var(--mono);font-size:11px}
+  .links a{color:var(--muted);text-decoration:none;border:1px solid var(--border);background:var(--surface);
+    padding:8px 14px;border-radius:999px;backdrop-filter:blur(14px);transition:.15s}
+  .links a:hover{color:var(--accent2);border-color:var(--accent2)}
+
+  /* theme dial */
+  .themebar{position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:12;display:flex;gap:8px;
+    padding:8px;border:1px solid var(--border);border-radius:999px;background:var(--surface);
+    backdrop-filter:blur(16px);box-shadow:0 8px 28px rgba(0,0,0,.45);animation:rise .8s .2s cubic-bezier(.22,1,.36,1) both}
+  .swatch{width:24px;height:24px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:transform .2s,border-color .2s;position:relative;overflow:hidden;background-clip:padding-box}
+  .swatch::before{content:"";position:absolute;inset:0;border-radius:50%;background:var(--swatch)}
+  .swatch:hover{transform:scale(1.15)}
+  .swatch[aria-pressed="true"]{border-color:#fff}
+  .swatch.midnight{--swatch:linear-gradient(135deg,#d8d4ca,#7a766e)}
+  .swatch.pikachu{--swatch:linear-gradient(135deg,#ffd500 50%,#3b6dff 50%)}
+  .swatch.atomic{--swatch:radial-gradient(circle at 35% 35%,#ff5cc8,#c061ff 70%)}
+  .swatch.grass{--swatch:linear-gradient(135deg,#9bbc0f,#0d1109)}
+  .swatch.fire{--swatch:linear-gradient(135deg,#ff7a18,#ffd23b)}
+  .swatch.water{--swatch:radial-gradient(circle at 35% 30%,#d8fbff,#5dcfff 45%,#0b46a8 100%)}
+  @keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important}}
+  @media (max-width:640px){.hint{display:none}.topbar{max-width:60vw}}
+</style>
+</head>
+<body>
+  <div id="gl"></div>
+
+  <div class="themebar" role="group" aria-label="Theme">
+    <div class="swatch midnight" data-theme-set="midnight" title="Original" aria-pressed="true"></div>
+    <div class="swatch pikachu"  data-theme-set="pikachu"  title="Pikachu Edition" aria-pressed="false"></div>
+    <div class="swatch atomic"   data-theme-set="atomic"   title="Atomic Purple" aria-pressed="false"></div>
+    <div class="swatch grass"    data-theme-set="grass"    title="Grass" aria-pressed="false"></div>
+    <div class="swatch fire"     data-theme-set="fire"     title="Fire" aria-pressed="false"></div>
+    <div class="swatch water"    data-theme-set="water"    title="Water" aria-pressed="false"></div>
+  </div>
+
+  <div class="topbar">
+    <div class="badge"><span class="dot"></span> Recompiled · SM83 → WASM · live 3D</div>
+    <h1>gb&#8209;recomp <span class="arrow">▸</span> 3D console</h1>
+    <p class="sub">This isn't an emulator running a ROM. The game's own Sharp&nbsp;SM83 machine code was <b>statically recompiled into WebAssembly</b> on the server, then executed natively in V8 in this tab. The hardware (PPU, timers, joypad, APU) is a JS runtime around it.</p>
+    <div id="rominfo">reading cartridge…</div>
+  </div>
+
+  <div class="hint">
+    <span class="lead">CONTROLS</span><br>
+    <kbd>↑↓←→</kbd> move · <kbd>Z</kbd>A · <kbd>X</kbd>B<br>
+    <kbd>Enter</kbd> Start · <kbd>Shift</kbd> Select<br>
+    drag = orbit · scroll = zoom · click buttons<br>
+    <kbd>F5</kbd>/<kbd>F6</kbd>/<kbd>F7</kbd> save · <kbd>F8</kbd>/<kbd>F9</kbd>/<kbd>F10</kbd> load
+  </div>
+
+  <div class="settings">
+    <button class="settings-toggle" id="settings-toggle" aria-expanded="false" aria-controls="savebar">
+      ⚙ Settings &amp; Saves <span class="chev">▾</span>
+    </button>
+    <div class="savebar" id="savebar">
+      <div class="saverow">
+        <span class="savelabel">BATTERY</span>
+        <span id="battstatus" class="savestat">—</span>
+        <button id="btn-save-now" class="savebtn">Save now</button>
+        <button id="btn-export-sav" class="savebtn">Export .sav</button>
+        <button id="btn-import-sav" class="savebtn">Import .sav</button>
+      </div>
+      <div class="saverow">
+        <span class="savelabel">AUTO</span>
+        <span id="autostatus" class="savestat">none yet</span>
+        <button id="btn-load-auto" class="savebtn" disabled>Load auto checkpoint</button>
+      </div>
+      <div class="saverow">
+        <span class="savelabel">STATE</span>
+        <button class="savebtn slot" data-state-save="0">Save&nbsp;1</button>
+        <button class="savebtn slot" data-state-load="0" disabled>Load&nbsp;1</button>
+        <button class="savebtn slot" data-state-save="1">Save&nbsp;2</button>
+        <button class="savebtn slot" data-state-load="1" disabled>Load&nbsp;2</button>
+        <button class="savebtn slot" data-state-save="2">Save&nbsp;3</button>
+        <button class="savebtn slot" data-state-load="2" disabled>Load&nbsp;3</button>
+      </div>
+      <div id="savetoast" class="savetoast"></div>
+    </div>
+  </div>
+
+  <div class="hud">
+    <span class="stat" id="status">loading…</span>
+    <span class="sep"></span>
+    <span class="stat" id="fps">— fps</span>
+    <span class="sep"></span>
+    <button class="hbtn" id="btn-sound">🔇 Sound</button>
+    <button class="hbtn" id="btn-rotate">↻ Auto-spin</button>
+    <button class="hbtn" id="btn-reset">⌖ Reset view</button>
+  </div>
+
+  <div class="links"><a href="/">← 2D version</a></div>
+
+  <!-- Three.js via importmap; expose THREE + OrbitControls as globals for the compiled module -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+    import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
+    window.THREE = THREE;
+    window.OrbitControls = OrbitControls;
+    window.RoundedBoxGeometry = RoundedBoxGeometry;
+    // load the compiled emulator-3D bridge AFTER globals are set
+    await import("/web/js/browser/gb3d.js");
+
+    // collapsible settings drawer
+    const toggle = document.getElementById("settings-toggle");
+    const bar = document.getElementById("savebar");
+    const openSaved = localStorage.getItem("gb-3d-settings-open") === "1";
+    if (openSaved) { bar.classList.add("open"); toggle.setAttribute("aria-expanded", "true"); }
+    toggle.addEventListener("click", () => {
+      const open = bar.classList.toggle("open");
+      toggle.setAttribute("aria-expanded", String(open));
+      localStorage.setItem("gb-3d-settings-open", open ? "1" : "0");
+    });
+
+    // theme dial → calls the global the 3D module exposes, persists choice
+    const swatches = document.querySelectorAll("[data-theme-set]");
+    const normalizeTheme = (t) => t === "dmg" ? "grass" : (t === "charizard" ? "fire" : t);
+    const saved = normalizeTheme(localStorage.getItem("gb-theme")) || "midnight";
+    localStorage.setItem("gb-theme", saved);
+    const sync = (t) => swatches.forEach((s) => s.setAttribute("aria-pressed", String(s.dataset.themeSet === t)));
+    sync(saved);
+    swatches.forEach((s) => s.addEventListener("click", () => {
+      const t = s.dataset.themeSet;
+      if (window.__gbApplyTheme) window.__gbApplyTheme(t);
+      sync(t);
+    }));
+  </script>
+</body>
+</html>

@@ -1,0 +1,300 @@
+/**
+ * Browser host — instantiates the (server-recompiled) game_logic.wasm and wires the
+ * hardware runtime, WITHOUT any Node/wabt dependency.
+ *
+ * Mirrors wasm_host.ts but takes pre-assembled wasm bytes (fetched from /api/wasm) and the
+ * raw ROM bytes (fetched from /api/rom). Builds MMU/PPU/timer/joypad and exposes a Machine
+ * the page drives via requestAnimationFrame.
+ */
+
+import { MMU } from "../runtime/mmu.ts";
+import { CPU } from "../runtime/cpu.ts";
+import { PPU, SCREEN_W, SCREEN_H } from "../runtime/ppu.ts";
+import { Timer } from "../runtime/timer.ts";
+import { Joypad, type Button } from "../runtime/joypad.ts";
+import { APU, apuIoHooks } from "../runtime/apu.ts";
+import { decode } from "../recompiler/decoder.ts";
+import { UNKNOWN_BLOCK, SENTINEL_HALT } from "../recompiler/module.ts";
+
+export const CYCLES_PER_FRAME = 70224;
+
+export class BrowserMachine {
+  mmu: MMU; ppu: PPU; timer: Timer; joypad: Joypad; apu: APU;
+  cpu: CPU;
+  exports: any;
+  frames = 0;
+  private tickCb: ((c: number) => void) | null = null;
+
+  private constructor(mmu: MMU) {
+    this.mmu = mmu;
+    this.cpu = new CPU(mmu);
+    this.ppu = new PPU(mmu);
+    this.timer = new Timer(mmu);
+    this.joypad = new Joypad(mmu); // registers itself as the IO hook (FF00)
+    this.apu = new APU(mmu);
+    // Chain APU register IO (FF10-FF3F) in front of the joypad's hook so both coexist.
+    mmu.setIoHooks(apuIoHooks(this.apu, this.joypad));
+  }
+
+  static async create(wasmBytes: Uint8Array, romBytes: Uint8Array): Promise<BrowserMachine> {
+    const mmu = new MMU(romBytes);
+    const m = new BrowserMachine(mmu);
+
+    const memory = new WebAssembly.Memory({ initial: 2, maximum: 2 });
+    let exportsRef: any = null;
+    const cpu = m.cpu;
+
+    const wasmToCpu = () => {
+      cpu.a = exportsRef.get_A(); cpu.f = exportsRef.get_F() & 0xf0;
+      cpu.b = exportsRef.get_B(); cpu.c = exportsRef.get_C();
+      cpu.d = exportsRef.get_D(); cpu.e = exportsRef.get_E();
+      cpu.h = exportsRef.get_H(); cpu.l = exportsRef.get_L();
+      cpu.sp = exportsRef.get_SP(); cpu.pc = exportsRef.get_PC();
+    };
+    const cpuToWasm = () => {
+      exportsRef.set_A(cpu.a); exportsRef.set_F(cpu.f & 0xf0);
+      exportsRef.set_B(cpu.b); exportsRef.set_C(cpu.c);
+      exportsRef.set_D(cpu.d); exportsRef.set_E(cpu.e);
+      exportsRef.set_H(cpu.h); exportsRef.set_L(cpu.l);
+      exportsRef.set_SP(cpu.sp); exportsRef.set_PC(cpu.pc);
+    };
+
+    const imports = {
+      env: {
+        mem: memory,
+        rb: (addr: number) => mmu.read(addr & 0xffff),
+        wb: (addr: number, val: number) => mmu.write(addr & 0xffff, val & 0xff),
+        tick: (c: number) => { cpu.cycles += c; if (m.tickCb) m.tickCb(c); },
+        interp: (addr: number) => {
+          wasmToCpu();
+          const b0 = mmu.read(addr), b1 = mmu.read((addr + 1) & 0xffff), b2 = mmu.read((addr + 2) & 0xffff);
+          const ins = decode(new Uint8Array([b0, b1, b2]), 0, addr);
+          const savedPc = cpu.pc;
+          cpu.exec(ins);
+          if (!ins.isTerminator) cpu.pc = savedPc;
+          cpuToWasm();
+        },
+        dispatch: (pc: number) => pc,
+        set_ime: (v: number) => { (cpu as any).ime = !!v; },
+        sched_ei: () => { (cpu as any).imeScheduled = true; },
+        set_halt: (v: number) => { cpu.halted = !!v; },
+      },
+    };
+
+    const result = await WebAssembly.instantiate(wasmBytes as any, imports as any) as WebAssembly.WebAssemblyInstantiatedSource;
+    exportsRef = result.instance.exports;
+    m.exports = exportsRef;
+
+    // PPU/timer/APU step in lockstep with cycles
+    m.tickCb = (c) => { m.ppu.step(c); m.timer.step(c); m.apu.step(c); };
+
+    // Seed post-boot DMG state (skips needing the copyrighted boot ROM).
+    exportsRef.set_A(0x01); exportsRef.set_F(0xb0);
+    exportsRef.set_B(0x00); exportsRef.set_C(0x13);
+    exportsRef.set_D(0x00); exportsRef.set_E(0xd8);
+    exportsRef.set_H(0x01); exportsRef.set_L(0x4d);
+    exportsRef.set_SP(0xfffe); exportsRef.set_PC(0x0100);
+    const io: [number, number][] = [
+      [0xff40, 0x91], [0xff47, 0xfc], [0xff48, 0xff], [0xff49, 0xff], [0xff0f, 0x00], [0xffff, 0x00],
+    ];
+    for (const [a, v] of io) mmu.rawIoWrite(a, v);
+
+    return m;
+  }
+
+  // diagnostics surfaced to the page
+  lastStall = "";
+  // Execution mode. The hand-written interpreter is the verified oracle: it boots and renders
+  // Pokemon Red correctly. The recompiled WASM fast-path is a progressive accelerator that is
+  // still being validated block-by-block against the oracle, so it defaults OFF. Flip to false
+  // to opt into the (faster but not-yet-fully-verified) recompiled blocks for fixed ROM bank 0.
+  interpreterOnly = true;
+  private syncWasmToCpu() {
+    const ex = this.exports, cpu = this.cpu;
+    cpu.a = ex.get_A(); cpu.f = ex.get_F() & 0xf0; cpu.b = ex.get_B(); cpu.c = ex.get_C();
+    cpu.d = ex.get_D(); cpu.e = ex.get_E(); cpu.h = ex.get_H(); cpu.l = ex.get_L();
+    cpu.sp = ex.get_SP(); cpu.pc = ex.get_PC();
+  }
+  private syncCpuToWasm() {
+    const ex = this.exports, cpu = this.cpu;
+    ex.set_A(cpu.a); ex.set_F(cpu.f & 0xf0); ex.set_B(cpu.b); ex.set_C(cpu.c);
+    ex.set_D(cpu.d); ex.set_E(cpu.e); ex.set_H(cpu.h); ex.set_L(cpu.l);
+    ex.set_SP(cpu.sp); ex.set_PC(cpu.pc);
+  }
+
+  private runCycles(target: number): void {
+    const cpu = this.cpu;
+    const ex = this.exports;
+    const start = cpu.cycles;
+    // Per-frame instruction budget. One DMG frame is ~17.5k machine cycles of work; cap at a
+    // generous 200k loop iterations so a pathological path can never freeze the tab — it just
+    // ends the frame early and we try again next rAF (self-healing).
+    let guard = 0;
+    const GUARD_MAX = 200_000;
+    while (cpu.cycles - start < target && guard++ < GUARD_MAX) {
+      // --- service interrupts ---
+      this.syncWasmToCpu();
+      const ic = cpu.serviceInterrupts();
+      if (ic > 0) { this.syncCpuToWasm(); if (this.tickCb) this.tickCb(ic); }
+
+      if (cpu.halted) {
+        // burn time until an interrupt wakes us
+        cpu.cycles += 4; if (this.tickCb) this.tickCb(4);
+        if (cpu.serviceInterrupts() > 0) { cpu.halted = false; this.syncCpuToWasm(); }
+        continue;
+      }
+
+      const cur = ex.get_PC() & 0xffff;
+      const cyBefore = cpu.cycles;
+
+      // INTERPRETER-FIRST MODE: route everything through the proven interpreter. Correct by
+      // construction (the interpreter is the oracle that boots/renders the ROM). We interpret a
+      // batch of instructions per outer iteration to amortize the wasm<->cpu sync cost.
+      if (this.interpreterOnly) {
+        this.syncWasmToCpu();
+        let inner = 0;
+        while (inner++ < 4096 && !cpu.halted && (cpu.cycles - start) < target) {
+          const b = cpu.cycles;
+          cpu.step();
+          if (this.tickCb) this.tickCb(cpu.cycles - b);
+          // break out periodically to re-check interrupts at a sane cadence
+          const i2 = cpu.serviceInterrupts();
+          if (i2 > 0) { if (this.tickCb) this.tickCb(i2); }
+        }
+        this.syncCpuToWasm();
+        continue;
+      }
+
+      // BANK-WINDOW GUARD: statically-lifted blocks in the switchable ROM window
+      // (0x4000-0x7FFF) were compiled from whatever bank was mapped at build time, but the
+      // live bank may differ -> the static block would run phantom code. Route these through
+      // the interpreter, which reads the CURRENT bank via the MMU. Interpret until PC leaves
+      // the window (or a budget) so we don't pay sync cost per instruction in tight bank loops.
+      // The recompiler only safely covers FIXED ROM bank 0 (0x0000-0x3FFF). Everything else —
+      // the switchable bank window (0x4000-0x7FFF, may be a different live bank) and all
+      // RAM-resident code (VRAM/SRAM/WRAM/echo/HRAM at >=0x8000) — must be interpreted against
+      // live memory, since those bytes are written at runtime and were never statically lifted.
+      const inFixedRom = cur < 0x4000;
+      if (!inFixedRom) {
+        this.syncWasmToCpu();
+        let inner = 0;
+        while (((cpu.pc & 0xffff) >= 0x4000) && inner++ < 16384 && !cpu.halted) {
+          const b = cpu.cycles;
+          cpu.step();
+          if (this.tickCb) this.tickCb(cpu.cycles - b);
+          // re-check interrupts mid-stretch so VBlank handlers in RAM fire promptly
+          if ((cpu.pc & 0xffff) < 0x4000) break;
+        }
+        this.syncCpuToWasm();
+        continue;
+      }
+
+      const next = ex.run(cur);
+      if (next === SENTINEL_HALT) {
+        cpu.halted = true;
+        this.syncWasmToCpu();
+      } else if (next === UNKNOWN_BLOCK) {
+        // interpret one instruction (RAM code / indirect / not-yet-lifted)
+        this.syncWasmToCpu();
+        cpu.step();
+        this.syncCpuToWasm();
+      }
+      // else: a recompiled block ran; it set PC + called $tick internally.
+
+      // --- forward-progress guard ---
+      // If neither cycles advanced NOR PC changed, we'd spin forever. Force a single
+      // interpreted step to break the deadlock, and if THAT also fails to move, bail the frame.
+      const pcAfter = ex.get_PC() & 0xffff;
+      if (cpu.cycles === cyBefore && pcAfter === cur) {
+        this.syncWasmToCpu();
+        const pcPreStep = cpu.pc;
+        cpu.step();
+        if (cpu.cycles === cyBefore && cpu.pc === pcPreStep) {
+          // genuinely stuck — record and abandon this frame so the tab stays alive
+          this.lastStall = "stuck @0x" + cur.toString(16);
+          cpu.cycles += 4; // nudge so the outer guard can't infinite-loop
+        }
+        this.syncCpuToWasm();
+        if (this.tickCb) this.tickCb(4);
+      }
+    }
+  }
+
+  runFrame(): void {
+    this.ppu.frameReady = false;
+    this.runCycles(CYCLES_PER_FRAME);
+    this.frames++;
+  }
+
+  setButton(b: Button, pressed: boolean): void { this.joypad.setButton(b, pressed); }
+
+  /** Pull accumulated stereo audio samples since the last call (host feeds these to Web Audio). */
+  drainAudio(): { left: Float32Array; right: Float32Array } { return this.apu.drain(); }
+  get audioQueued(): number { return this.apu.queued; }
+  setAudioSampleRate(_hz: number): void { /* APU constructed at 44100; reserved for future */ }
+  get framebuffer(): Uint8Array { return this.ppu.framebuffer; }
+  get width(): number { return SCREEN_W; }
+  get height(): number { return SCREEN_H; }
+
+  // ---------------------------------------------------------------------------
+  // SAVE SYSTEM
+  // ---------------------------------------------------------------------------
+
+  /** Stable per-cartridge key (header title) used to namespace saves in storage. */
+  saveKey(): string {
+    const t = this.mmu.romTitle().replace(/[^A-Za-z0-9_]/g, "") || "UNKNOWN";
+    return "gbrecomp:" + t;
+  }
+  hasBattery(): boolean { return this.mmu.hasBattery(); }
+
+  // ---- Battery save (cartridge SRAM only — the real .sav file) ----
+  /** The cartridge's battery-backed SRAM bytes (compatible with standard .sav files). */
+  getBatterySave(): Uint8Array { return new Uint8Array(this.mmu.getExtRam()); }
+  /** Load a .sav (battery SRAM) into the cartridge. */
+  loadBatterySave(data: Uint8Array): void { this.mmu.loadExtRam(data); }
+
+  // ---- Save-state (full machine snapshot — instant restore anywhere) ----
+  /** Capture CPU + MMU + PPU + Timer into a JSON-serializable object. */
+  snapshot(): MachineState {
+    this.syncWasmToCpu(); // pull live registers out of WASM globals first
+    const cpu = this.cpu;
+    return {
+      version: 1,
+      title: this.mmu.romTitle(),
+      frames: this.frames,
+      cpu: {
+        a: cpu.a, f: cpu.f, b: cpu.b, c: cpu.c, d: cpu.d, e: cpu.e, h: cpu.h, l: cpu.l,
+        sp: cpu.sp, pc: cpu.pc, ime: (cpu as any).ime, halted: cpu.halted, cycles: cpu.cycles,
+      },
+      mmu: this.mmu.serializeState(),
+      ppu: this.ppu.serializeState(),
+      timer: this.timer.serializeState(),
+    };
+  }
+  /** Restore a previously captured snapshot and re-sync the CPU into WASM. */
+  restore(s: MachineState): void {
+    const cpu = this.cpu;
+    cpu.a = s.cpu.a; cpu.f = s.cpu.f; cpu.b = s.cpu.b; cpu.c = s.cpu.c;
+    cpu.d = s.cpu.d; cpu.e = s.cpu.e; cpu.h = s.cpu.h; cpu.l = s.cpu.l;
+    cpu.sp = s.cpu.sp; cpu.pc = s.cpu.pc;
+    (cpu as any).ime = s.cpu.ime; cpu.halted = s.cpu.halted; cpu.cycles = s.cpu.cycles;
+    this.mmu.loadState(s.mmu);
+    this.ppu.loadState(s.ppu);
+    this.timer.loadState(s.timer);
+    this.frames = s.frames;
+    this.syncCpuToWasm(); // push restored registers back into WASM globals
+  }
+}
+
+export interface MachineState {
+  version: number;
+  title: string;
+  frames: number;
+  cpu: {
+    a: number; f: number; b: number; c: number; d: number; e: number; h: number; l: number;
+    sp: number; pc: number; ime: boolean; halted: boolean; cycles: number;
+  };
+  mmu: import("../runtime/mmu.ts").MmuState;
+  ppu: { modeClock: number; windowLine: number };
+  timer: { divCounter: number; timaCounter: number };
+}

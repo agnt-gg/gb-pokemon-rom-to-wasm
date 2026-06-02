@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "outDir": "web/js",
+    "lib": ["ES2022", "DOM"],
+    "removeComments": false
+  },
+  "include": [
+    "src/browser/**/*.ts",
+    "src/runtime/mmu.ts",
+    "src/runtime/cpu.ts",
+    "src/runtime/alu.ts",
+    "src/runtime/ppu.ts",
+    "src/runtime/timer.ts",
+    "src/runtime/joypad.ts",
+    "src/recompiler/decoder.ts",
+    "src/recompiler/opcodes.ts",
+    "src/recompiler/types.ts",
+    "src/recompiler/lifter.ts",
+    "src/recompiler/module.ts"
+  ]
+}

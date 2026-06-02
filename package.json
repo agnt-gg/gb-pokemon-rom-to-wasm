@@ -1,0 +1,30 @@
+{
+  "name": "gb-recomp",
+  "version": "0.1.0",
+  "description": "Static recompiler: lifts Sharp SM83 (Game Boy) assembly to WebAssembly. Targets Pokemon Red, verified against an on-disk VisualBoyAdvance oracle.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test --experimental-strip-types tests/*.test.ts",
+    "test:decoder": "node --experimental-strip-types tests/decoder.test.ts",
+    "test:alu": "node --experimental-strip-types tests/alu.test.ts",
+    "recomp": "node --experimental-strip-types src/recompiler/cli.ts",
+    "serve": "node --experimental-strip-types tools/serve.ts"
+  },
+  "keywords": [
+    "gameboy",
+    "sm83",
+    "lr35902",
+    "static-recompilation",
+    "webassembly",
+    "recomp",
+    "pokered"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "wabt": "^1.0.39"
+  }
+}

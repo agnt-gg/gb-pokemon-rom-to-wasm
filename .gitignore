@@ -1,0 +1,36 @@
+# dependencies
+node_modules/
+
+# generated compiler/runtime outputs
+build/
+*.wasm
+*.wat
+*.map
+
+# ROMs / saves / user-provided copyrighted data
+*.gb
+*.gbc
+*.gba
+*.nes
+*.sfc
+*.smc
+*.sav
+*.state
+
+# logs / scratch
+*.log
+err.txt
+server.log
+tmp_*
+*_tmp.*
+
+# internal report versions
+reports/*-v2.html
+reports/*-v3.html
+reports/*-v4.html
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

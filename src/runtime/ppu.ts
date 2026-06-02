@@ -1,0 +1,295 @@
+/**
+ * PPU — the Game Boy Pixel Processing Unit.
+ *
+ * This is the "console" half that turns the recompiled CPU's VRAM/OAM/register writes into
+ * actual pixels. It implements:
+ *   - the 4 LCD modes + STAT interrupt + LY/LYC compare + VBlank interrupt
+ *   - background rendering (LCDC tile-map / tile-data selection, SCX/SCY scroll)
+ *   - window rendering (WX/WY)
+ *   - sprite (OBJ) rendering (8x8 and 8x16, X/Y flip, priority, palette OBP0/OBP1)
+ *   - the DMG 4-shade palette (BGP/OBP0/OBP1)
+ *
+ * Output is a 160x144 RGBA framebuffer the browser blits to a <canvas>.
+ *
+ * Registers (all in 0xFF40-0xFF4B):
+ *   FF40 LCDC  FF41 STAT  FF42 SCY  FF43 SCX  FF44 LY  FF45 LYC
+ *   FF47 BGP   FF48 OBP0  FF49 OBP1 FF4A WY   FF4B WX
+ */
+
+import type { MMU } from "./mmu.ts";
+
+export const SCREEN_W = 160;
+export const SCREEN_H = 144;
+
+// LCD mode timing in t-cycles (DMG):
+//   Mode 2 (OAM scan)   = 80
+//   Mode 3 (draw)       = 172 (approx, fixed here)
+//   Mode 0 (HBlank)     = 204
+//   total per scanline  = 456 ; 144 visible lines + 10 VBlank lines = 154 lines/frame
+const OAM_CYCLES = 80;
+const DRAW_CYCLES = 172;
+const LINE_CYCLES = 456;
+const VBLANK_LINE = 144;
+const TOTAL_LINES = 154;
+
+// The classic DMG green-tinted 4-shade palette (lightest -> darkest), RGBA.
+const SHADES: [number, number, number][] = [
+  [0xe0, 0xf8, 0xd0], // 0 lightest
+  [0x88, 0xc0, 0x70], // 1
+  [0x34, 0x68, 0x56], // 2
+  [0x08, 0x18, 0x20], // 3 darkest
+];
+
+export class PPU {
+  mmu: MMU;
+  /** 160*144*4 RGBA bytes. */
+  framebuffer = new Uint8Array(SCREEN_W * SCREEN_H * 4);
+  /** Set true at the end of a frame (line 153 -> 0 wrap). The host blits & clears it. */
+  frameReady = false;
+
+  private modeClock = 0;
+  private windowLine = 0;
+
+  /** Snapshot PPU timing state for save-states (LCD regs live in MMU.io). */
+  serializeState(): { modeClock: number; windowLine: number } {
+    return { modeClock: this.modeClock, windowLine: this.windowLine };
+  }
+  loadState(s: { modeClock: number; windowLine: number }): void {
+    this.modeClock = s.modeClock; this.windowLine = s.windowLine;
+  }
+
+  constructor(mmu: MMU) {
+    this.mmu = mmu;
+    // Init LCDC to a sane "on" value so a fresh boot isn't a black void before the game writes it.
+    this.mmu.rawIoWrite(0xff40, 0x91);
+    this.mmu.rawIoWrite(0xff47, 0xfc); // BGP
+  }
+
+  private get lcdc(): number { return this.mmu.rawIoRead(0xff40); }
+  private get scy(): number { return this.mmu.rawIoRead(0xff42); }
+  private get scx(): number { return this.mmu.rawIoRead(0xff43); }
+  private get ly(): number { return this.mmu.rawIoRead(0xff44); }
+  private set ly(v: number) { this.mmu.rawIoWrite(0xff44, v & 0xff); }
+  private get lyc(): number { return this.mmu.rawIoRead(0xff45); }
+  private get wy(): number { return this.mmu.rawIoRead(0xff4a); }
+  private get wx(): number { return this.mmu.rawIoRead(0xff4b); }
+  private get bgp(): number { return this.mmu.rawIoRead(0xff47); }
+  private get obp0(): number { return this.mmu.rawIoRead(0xff48); }
+  private get obp1(): number { return this.mmu.rawIoRead(0xff49); }
+
+  private get stat(): number { return this.mmu.rawIoRead(0xff41); }
+  private set stat(v: number) { this.mmu.rawIoWrite(0xff41, v & 0xff); }
+
+  private requestInterrupt(bit: number): void {
+    const iff = this.mmu.rawIoRead(0xff0f);
+    this.mmu.rawIoWrite(0xff0f, iff | (1 << bit));
+  }
+
+  private setMode(mode: number): void {
+    this.stat = (this.stat & ~0x03) | (mode & 0x03);
+    // STAT interrupt sources: bit3 HBlank(0), bit4 VBlank(1), bit5 OAM(2)
+    if (mode === 0 && this.stat & 0x08) this.requestInterrupt(1);
+    if (mode === 2 && this.stat & 0x20) this.requestInterrupt(1);
+  }
+
+  private checkLyc(): void {
+    if (this.ly === this.lyc) {
+      this.stat |= 0x04;
+      if (this.stat & 0x40) this.requestInterrupt(1); // LYC=LY STAT interrupt
+    } else {
+      this.stat &= ~0x04;
+    }
+  }
+
+  /** Advance the PPU by `cycles` t-cycles, driven from the machine's frame loop. */
+  step(cycles: number): void {
+    // LCD off? hold LY=0, mode 0.
+    if (!(this.lcdc & 0x80)) {
+      this.modeClock = 0;
+      this.ly = 0;
+      this.setMode(0);
+      return;
+    }
+
+    this.modeClock += cycles;
+    const mode = this.stat & 0x03;
+
+    switch (mode) {
+      case 2: // OAM scan
+        if (this.modeClock >= OAM_CYCLES) {
+          this.modeClock -= OAM_CYCLES;
+          this.setMode(3);
+        }
+        break;
+      case 3: // drawing
+        if (this.modeClock >= DRAW_CYCLES) {
+          this.modeClock -= DRAW_CYCLES;
+          this.renderScanline(this.ly);
+          this.setMode(0); // -> HBlank
+        }
+        break;
+      case 0: // HBlank
+        if (this.modeClock >= LINE_CYCLES - OAM_CYCLES - DRAW_CYCLES) {
+          this.modeClock -= LINE_CYCLES - OAM_CYCLES - DRAW_CYCLES;
+          this.ly = this.ly + 1;
+          this.checkLyc();
+          if (this.ly === VBLANK_LINE) {
+            this.setMode(1); // -> VBlank
+            this.requestInterrupt(0); // VBlank interrupt (bit 0)
+            this.frameReady = true;
+          } else {
+            this.setMode(2);
+          }
+        }
+        break;
+      case 1: // VBlank (10 lines)
+        if (this.modeClock >= LINE_CYCLES) {
+          this.modeClock -= LINE_CYCLES;
+          this.ly = this.ly + 1;
+          if (this.ly > TOTAL_LINES - 1) {
+            this.ly = 0;
+            this.windowLine = 0;
+            this.setMode(2); // back to OAM scan for new frame
+            this.checkLyc();
+          } else {
+            this.checkLyc();
+          }
+        }
+        break;
+    }
+  }
+
+  // --- rendering -----------------------------------------------------------
+
+  private vram(addr: number): number {
+    // addr is 0x8000-0x9FFF logical
+    return this.mmu.getVram()[addr - 0x8000] ?? 0;
+  }
+
+  private shadeForColor(palette: number, colorId: number): [number, number, number] {
+    const shade = (palette >> (colorId * 2)) & 0x03;
+    return SHADES[shade]!;
+  }
+
+  private renderScanline(line: number): void {
+    const lcdc = this.lcdc;
+    const fb = this.framebuffer;
+    const rowBase = line * SCREEN_W * 4;
+
+    // Per-pixel BG color id buffer (for sprite priority vs BG color 0).
+    const bgColorIds = new Uint8Array(SCREEN_W);
+
+    // --- Background ---
+    if (lcdc & 0x01) {
+      const bgMapBase = lcdc & 0x08 ? 0x9c00 : 0x9800;
+      const tileDataBase = lcdc & 0x10 ? 0x8000 : 0x9000; // signed when 0x9000
+      const signed = !(lcdc & 0x10);
+      const y = (line + this.scy) & 0xff;
+      const tileRow = (y >> 3) & 0x1f;
+
+      for (let x = 0; x < SCREEN_W; x++) {
+        const sx = (x + this.scx) & 0xff;
+        const tileCol = (sx >> 3) & 0x1f;
+        const mapAddr = bgMapBase + tileRow * 32 + tileCol;
+        let tileIdx = this.vram(mapAddr);
+        let tileAddr: number;
+        if (signed) {
+          const s = tileIdx > 127 ? tileIdx - 256 : tileIdx;
+          tileAddr = tileDataBase + s * 16;
+        } else {
+          tileAddr = tileDataBase + tileIdx * 16;
+        }
+        const py = y & 7;
+        const lo = this.vram(tileAddr + py * 2);
+        const hi = this.vram(tileAddr + py * 2 + 1);
+        const bit = 7 - (sx & 7);
+        const colorId = (((hi >> bit) & 1) << 1) | ((lo >> bit) & 1);
+        bgColorIds[x] = colorId;
+        const [r, g, b] = this.shadeForColor(this.bgp, colorId);
+        const o = rowBase + x * 4;
+        fb[o] = r; fb[o + 1] = g; fb[o + 2] = b; fb[o + 3] = 255;
+      }
+    } else {
+      // BG off -> white
+      for (let x = 0; x < SCREEN_W; x++) {
+        const o = rowBase + x * 4;
+        fb[o] = SHADES[0]![0]; fb[o + 1] = SHADES[0]![1]; fb[o + 2] = SHADES[0]![2]; fb[o + 3] = 255;
+      }
+    }
+
+    // --- Window ---
+    if (lcdc & 0x20 && line >= this.wy) {
+      const wxAdj = this.wx - 7;
+      if (wxAdj < SCREEN_W) {
+        const winMapBase = lcdc & 0x40 ? 0x9c00 : 0x9800;
+        const tileDataBase = lcdc & 0x10 ? 0x8000 : 0x9000;
+        const signed = !(lcdc & 0x10);
+        const wy = this.windowLine;
+        const tileRow = (wy >> 3) & 0x1f;
+        let drew = false;
+        for (let x = Math.max(0, wxAdj); x < SCREEN_W; x++) {
+          const wxp = x - wxAdj;
+          const tileCol = (wxp >> 3) & 0x1f;
+          const mapAddr = winMapBase + tileRow * 32 + tileCol;
+          const tileIdx = this.vram(mapAddr);
+          let tileAddr: number;
+          if (signed) {
+            const s = tileIdx > 127 ? tileIdx - 256 : tileIdx;
+            tileAddr = tileDataBase + s * 16;
+          } else {
+            tileAddr = tileDataBase + tileIdx * 16;
+          }
+          const py = wy & 7;
+          const lo = this.vram(tileAddr + py * 2);
+          const hi = this.vram(tileAddr + py * 2 + 1);
+          const bit = 7 - (wxp & 7);
+          const colorId = (((hi >> bit) & 1) << 1) | ((lo >> bit) & 1);
+          bgColorIds[x] = colorId;
+          const [r, g, b] = this.shadeForColor(this.bgp, colorId);
+          const o = rowBase + x * 4;
+          fb[o] = r; fb[o + 1] = g; fb[o + 2] = b; fb[o + 3] = 255;
+          drew = true;
+        }
+        if (drew) this.windowLine++;
+      }
+    }
+
+    // --- Sprites (OBJ) ---
+    if (lcdc & 0x02) {
+      const tall = (lcdc & 0x04) !== 0;
+      const spriteH = tall ? 16 : 8;
+      const oam = this.mmu.getOam();
+      // GB renders up to 10 sprites/line; lower OAM index = higher priority on DMG.
+      let drawn = 0;
+      for (let i = 0; i < 40 && drawn < 10; i++) {
+        const sy = oam[i * 4]! - 16;
+        const sx = oam[i * 4 + 1]! - 8;
+        let tile = oam[i * 4 + 2]!;
+        const attr = oam[i * 4 + 3]!;
+        if (line < sy || line >= sy + spriteH) continue;
+        drawn++;
+        const flipY = (attr & 0x40) !== 0;
+        const flipX = (attr & 0x20) !== 0;
+        const palette = attr & 0x10 ? this.obp1 : this.obp0;
+        const behindBg = (attr & 0x80) !== 0;
+        let row = line - sy;
+        if (flipY) row = spriteH - 1 - row;
+        if (tall) tile &= 0xfe; // 8x16 ignores low bit
+        const tileAddr = 0x8000 + tile * 16 + row * 2;
+        const lo = this.vram(tileAddr);
+        const hi = this.vram(tileAddr + 1);
+        for (let px = 0; px < 8; px++) {
+          const xx = sx + px;
+          if (xx < 0 || xx >= SCREEN_W) continue;
+          const bit = flipX ? px : 7 - px;
+          const colorId = (((hi >> bit) & 1) << 1) | ((lo >> bit) & 1);
+          if (colorId === 0) continue; // transparent
+          if (behindBg && bgColorIds[xx] !== 0) continue; // BG priority
+          const [r, g, b] = this.shadeForColor(palette, colorId);
+          const o = rowBase + xx * 4;
+          fb[o] = r; fb[o + 1] = g; fb[o + 2] = b; fb[o + 3] = 255;
+        }
+      }
+    }
+  }
+}
