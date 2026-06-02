@@ -210,32 +210,15 @@ async function boot() {
   let last = performance.now();
   let frameCount = 0;
   let fpsAccum = 0;
-  let emuAccum = 0;
-  // WASM-block mode can feel slightly more sluggish than the pure interpreter because control
-  // returns at block/banked-fallback boundaries. Keep CPU semantics intact and calibrate pacing
-  // perceptually at the frontend layer.
-  const EMU_SPEED = 1.12;
-  const EMU_FRAME_MS = 1000 / (59.7275 * EMU_SPEED);
-  const MAX_CATCHUP_FRAMES = 5;
 
   let dead = false;
   function loop(now: number) {
     if (dead) return;
-    const dt = Math.min(100, now - last); last = now;
-    fpsAccum += dt;
-    emuAccum += dt;
-    let ran = 0;
     try {
-      // Real-time pacing: if rendering/rAF drops below 60Hz, run multiple emulated
-      // frames before drawing once. Without this, gameplay speed is tied to visual FPS.
-      while (emuAccum >= EMU_FRAME_MS && ran < MAX_CATCHUP_FRAMES) {
-        machine.runFrame();
-        emuAccum -= EMU_FRAME_MS;
-        ran++;
-        frameCount++;
-      }
-      if (ran === MAX_CATCHUP_FRAMES && emuAccum >= EMU_FRAME_MS) emuAccum = 0;
-      if (ran === 0) { requestAnimationFrame(loop); return; }
+      // Smooth visual pacing: run exactly one emulated frame per rendered frame.
+      // Catch-up mode kept game time closer under rAF drops, but hid intermediate frames
+      // and made walking/animation feel choppy compared with interpreter mode.
+      machine.runFrame();
     } catch (err) {
       dead = true;
       statusEl.textContent = "frame error: " + (err as Error).message;
@@ -248,13 +231,16 @@ async function boot() {
     if (a.left.length) audio.push(a.left, a.right);
     saver.tick();
 
-    if (frameCount % 15 < ran) {
+    frameCount++;
+    const dt = now - last; last = now;
+    fpsAccum += dt;
+    if (frameCount % 15 === 0) {
       const stall = (machine as any).lastStall;
-      fpsEl.textContent = (1000 / (fpsAccum / 15)).toFixed(0) + " fps · " + ran + "x emu · " + EMU_SPEED.toFixed(2) + "x speed";
+      fpsEl.textContent = (1000 / (fpsAccum / 15)).toFixed(0) + " fps · smooth 1x";
       statusEl.textContent = stall ? ("running ✓ (" + stall + ")") : ("running ✓ frame " + frameCount);
       fpsAccum = 0;
     }
-    if (frameCount <= ran) console.log("[gb] first frame rendered");
+    if (frameCount === 1) console.log("[gb] first frame rendered");
     requestAnimationFrame(loop);
   }
   console.log("[gb] starting frame loop");

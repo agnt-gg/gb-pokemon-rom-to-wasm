@@ -562,27 +562,11 @@ async function boot() {
     tex.needsUpdate = true;
   }
 
-  let emuAccum = 0;
-  // WASM-block mode can feel slightly more sluggish than the pure interpreter because control
-  // returns at block/banked-fallback boundaries. Keep CPU semantics intact and calibrate pacing
-  // perceptually at the frontend layer.
-  const EMU_SPEED = 1.12;
-  const EMU_FRAME_MS = 1000 / (59.7275 * EMU_SPEED);
-  const MAX_CATCHUP_FRAMES = 5;
-
   function loop(now: number) {
-    const dt = Math.min(100, now - last); last = now;
-    emuAccum += dt;
-    let ran = 0;
-    // Real-time pacing: Three.js can render below 60 FPS on some machines. Run catch-up
-    // emulation frames, then render the latest framebuffer once so gameplay speed remains normal.
-    while (emuAccum >= EMU_FRAME_MS && ran < MAX_CATCHUP_FRAMES) {
-      machine.runFrame();
-      emuAccum -= EMU_FRAME_MS;
-      ran++;
-    }
-    if (ran === MAX_CATCHUP_FRAMES && emuAccum >= EMU_FRAME_MS) emuAccum = 0;
-    if (ran > 0) renderGbToCanvas();
+    const dt = now - last; last = now;
+    // Smooth visual pacing: one emulated frame per rendered frame, no hidden catch-up frames.
+    machine.runFrame();
+    renderGbToCanvas();
     const a = machine.drainAudio();
     if (a.left.length) audio.push(a.left, a.right);
 
@@ -615,7 +599,7 @@ async function boot() {
 
     frameCount++; fpsAccum += dt;
     if (frameCount % 20 === 0) {
-      fpsEl.textContent = (1000 / (fpsAccum / 20)).toFixed(0) + " fps · " + Math.max(1, ran) + "x emu · " + EMU_SPEED.toFixed(2) + "x speed";
+      fpsEl.textContent = (1000 / (fpsAccum / 20)).toFixed(0) + " fps · smooth 1x";
       fpsAccum = 0;
     }
     saver.tick();
