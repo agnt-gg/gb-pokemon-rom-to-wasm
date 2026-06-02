@@ -35,7 +35,7 @@ async function boot() {
 
   infoEl.innerHTML =
     `<b>${info.title}</b> · ${info.mbc} · ${info.romSizeKB}KB<br>` +
-    `${info.blocks} blocks / ${info.instrs} instrs → ${(info.wasmBytes / 1024).toFixed(0)}KB wasm`;
+    `${info.blocks} SM83 blocks / ${info.instrs} instrs → ${(info.wasmBytes / 1024).toFixed(0)}KB WASM module`;
 
   console.log("[gb] fetched: rom-info, wasm(" + wasm.byteLength + "), rom(" + rom.byteLength + ")");
   statusEl.textContent = "instantiating WebAssembly…";

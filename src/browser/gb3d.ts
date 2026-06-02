@@ -1,5 +1,5 @@
 /**
- * 3D front-end. Boots the SAME recompiled machine as main.ts, but instead of blitting the
+ * 3D front-end. Boots the SAME generated-WASM/JS-runtime machine as main.ts, but instead of blitting the
  * framebuffer to a 2D <canvas>, it draws into an offscreen canvas that is used as a live
  * THREE.CanvasTexture on a fully-modeled 3D Game Boy. Keyboard + 3D on-model buttons both
  * drive the joypad; audio + battery saves + save-states are wired identically.

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>gb-recomp · SM83 → WebAssembly</title>
+<title>Pokémon ROM → WASM Lab · SM83 Hybrid Runtime</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&family=Press+Start+2P&display=swap" rel="stylesheet">
@@ -265,11 +265,9 @@
   </div>
 
   <header>
-    <div class="badge"><span class="dot"></span> Recompiled · SM83 → WASM · live in your browser</div>
-    <h1>gb&#8209;recomp <span class="arrow">▸</span> playing recompiled WebAssembly</h1>
-    <p class="sub">This isn't an emulator running a ROM. The game's own Sharp&nbsp;SM83 machine code was
-    <b>statically recompiled into WebAssembly</b> on the server, then executed natively in V8 in this tab.
-    The hardware (PPU, timers, joypad, APU) is a JS runtime around it.</p>
+    <div class="badge"><span class="dot"></span> Pokemon ROM bytes -> SM83 blocks -> WASM hybrid runtime</div>
+    <h1>Pokemon ROM <span class="arrow">-></span> browser-playable WASM system</h1>
+    <p class="sub">A user-provided Game Boy ROM is decoded into Sharp&nbsp;SM83 machine-code blocks, then lifted into a generated WebAssembly module on the server. In this browser build, WASM drives the block/control-flow shell while a correctness-first JS Game Boy runtime supplies MMU/MBC banking, PPU, OAM DMA, timers, joypad, APU, saves, and interpreter fallback for unsafe code.</p>
   </header>
 
   <div class="console">
@@ -345,8 +343,7 @@
   </div>
 
   <footer>
-    The recompiler reads your own local ROM only to discover its control-flow graph and emit a
-    WASM module of your own copy, for your own use. Boot ROM is skipped via post-boot register seeding.
+    This experimental ROM-to-WASM system reads your own local ROM to discover machine-code blocks and emit a generated WASM module for your own copy. No boot ROM is bundled; startup uses post-boot register seeding.
   </footer>
 
   <script>

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>gb-recomp · 3D · SM83 → WebAssembly</title>
+<title>Pokémon ROM → WASM Lab · 3D Console</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -98,9 +98,9 @@
   </div>
 
   <div class="topbar">
-    <div class="badge"><span class="dot"></span> Recompiled · SM83 → WASM · live 3D</div>
-    <h1>gb&#8209;recomp <span class="arrow">▸</span> 3D console</h1>
-    <p class="sub">This isn't an emulator running a ROM. The game's own Sharp&nbsp;SM83 machine code was <b>statically recompiled into WebAssembly</b> on the server, then executed natively in V8 in this tab. The hardware (PPU, timers, joypad, APU) is a JS runtime around it.</p>
+    <div class="badge"><span class="dot"></span> Pokemon ROM bytes -> SM83 blocks -> WASM hybrid runtime · live 3D</div>
+    <h1>Pokemon ROM <span class="arrow">-></span> 3D WASM console</h1>
+    <p class="sub">A user-provided Game Boy ROM is decoded into Sharp&nbsp;SM83 machine-code blocks and lifted into a generated WebAssembly module on the server. The live 3D console runs the same browser system: WASM handles block/control-flow execution while a JS Game Boy runtime supplies MMU/MBC banking, PPU, OAM DMA, timers, joypad, APU, saves, and interpreter fallback for unsafe code.</p>
     <div id="rominfo">reading cartridge…</div>
   </div>
 
