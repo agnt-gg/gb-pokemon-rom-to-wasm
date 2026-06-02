@@ -25,7 +25,7 @@ export class AudioSink {
   get muted(): boolean { return this._muted; }
 
   setPlaybackSpeed(v: number): void {
-    this.playbackSpeed = [0.5, 0.75, 1].includes(v) ? v : 1;
+    this.playbackSpeed = [0.25, 0.5, 1].includes(v) ? v : 1;
   }
 
   /** Create + resume the AudioContext and load the worklet. Safe to call repeatedly. */
@@ -56,7 +56,7 @@ export class AudioSink {
 
     // Output time-scaling happens here, at the final WebAudio stream. This is different from
     // scaling APU cycles: the game's sound driver can still write registers at boosted gameplay
-    // speed, but AUDIO 0.5x / 0.75x stretches the emitted stream so the user can tune perceived
+    // speed, but inverse gameplay speed stretches the emitted stream so the user can tune perceived
     // music/SFX tempo independently.
     const effectiveInRate = APU_RATE * this.playbackSpeed;
     const ratio = effectiveInRate / ctxRate; // input samples consumed per output sample
