@@ -13,6 +13,7 @@ The project began with **Pokémon Red / MBC3** and now includes a multi-ROM 3D l
 | `yellow` | Pokémon Yellow | `POKEMON YELLOW` | MBC5 + RAM + Battery | Playable candidate; MBC5 + LCD/STAT fixes |
 | `gold` | Pokémon Gold | `POKEMON_GLD` | MBC3 + Timer + RAM + Battery | Playable candidate; RTC register/latch support |
 | `silver` | Pokémon Silver | `POKEMON_SLV` | MBC3 + Timer + RAM + Battery | Playable candidate; RTC register/latch support |
+| `crystal` | Pokémon Crystal | `PM_CRYSTAL` | MBC3 + Timer + RAM + Battery, CGB-only | Experimental CGB target; boots/title-smoke-tested with partial CGB runtime |
 
 > Important: this repository does **not** include any ROM. You must provide your own legally obtained ROMs locally. Do not commit ROMs, generated game WASM, `.sav` files, or save-state exports.
 
@@ -38,7 +39,7 @@ This is not source assembly compilation. It is binary lifting from ROM machine c
 - WebAssembly Text / WASM generation
 - hybrid execution with interpreter fallback for banked/unsafe/timing-sensitive regions
 - MBC/MMU behavior including SRAM, MBC3, MBC5, and OAM DMA
-- minimal MBC3 real-time-clock register select/latch behavior for Gold/Silver
+- minimal MBC3 real-time-clock register select/latch behavior for Gold/Silver/Crystal
 - CGB-era title parsing for clean save namespaces (`POKEMON_GLD`, `POKEMON_SLV`)
 - PPU rendering: background/window/sprites
 - Yellow-specific LCD/STAT blank-screen fix: no synthetic STAT interrupt storm while LCD is disabled
@@ -52,6 +53,7 @@ This is not source assembly compilation. It is binary lifting from ROM machine c
 - 2D themed browser frontend
 - custom Three.js Game Boy frontend with live framebuffer texture
 - ROM library page: `web/3d-library.html`
+- partial CGB runtime path for Crystal: CGB boot identity, 2-bank VRAM, 8-bank WRAM, CGB palettes, tile/sprite attribute support, HDMA transfer handling, and KEY1/STOP speed-switch semantics
 - transparent shell themes with internal PCB/battery details
 - scientific writeup in `docs/rom-to-wasm-process.html`
 
@@ -114,6 +116,7 @@ http://localhost:8080/web/3d-library.html?rom=blue
 http://localhost:8080/web/3d-library.html?rom=yellow
 http://localhost:8080/web/3d-library.html?rom=gold
 http://localhost:8080/web/3d-library.html?rom=silver
+http://localhost:8080/web/3d-library.html?rom=crystal
 ```
 
 Depending on your local setup, configure `ROM_ROOT` / catalog paths in `tools/serve.ts` before running. The repository intentionally does not ship ROMs.
@@ -132,7 +135,7 @@ Browser storage is scoped by origin. `localhost:8080` and `localhost:8099` do no
 ```txt
 src/recompiler/   SM83 decoder, block discovery, lifter, WAT/WASM assembly
 src/runtime/      Game Boy hardware runtime: MMU, MBC1/MBC3/MBC5, RTC, PPU, APU, timer, joypad, interpreter
-src/browser/      BrowserMachine host, saves, audio, 2D/3D frontend bridges, multi-ROM 3D library
+src/browser/      BrowserMachine host, saves, audio, 2D/3D frontend bridges, multi-ROM 3D library, CGB boot routing
 tests/            decoder, CPU, lockstep, banking, DMA, APU, save, browser diagnostics
 tools/            local dev server + ROM catalog
 docs/             scientific writeup
@@ -156,9 +159,26 @@ The live branch was extended from the original Red proof target into a Pokémon 
 - Blue added as another MBC3 Generation I target.
 - Yellow added with MBC5 support.
 - Gold and Silver added with MBC3 timer/RTC register support.
+- Crystal added as an experimental CGB-only target with a partial CGB hardware path.
 - 3D library page added for ROM selection.
 - Battery `.sav` export/import hardened.
 - Save-state slot visibility plus export/import bundles added.
+
+## Crystal / CGB status
+
+Crystal is possible because the runtime now has a CGB mode, but it should be treated as **experimental** rather than as a completed Game Boy Color emulator. The current CGB slice is enough for boot/title/input smoke tests and browser testing, and includes:
+
+- CGB-only boot identity for `0x0143 == 0xC0` ROMs
+- VRAM bank register `FF4F / VBK`
+- WRAM bank register `FF70 / SVBK`
+- CGB BG/OBJ palette registers `FF68-FF6B`
+- BG/window tile attributes: palette, tile bank, horizontal/vertical flip
+- OBJ CGB attributes: palette and tile bank
+- VRAM DMA / HDMA register path `FF51-FF55`
+- KEY1 / STOP speed-switch register semantics
+- save-state serialization of CGB banks, palette RAM, HDMA state, and KEY1
+
+Future polish for broader CGB compatibility includes exact HDMA timing, full CGB priority behavior, double-speed cycle accounting, additional CGB timing edge cases, and broader ROM corpus testing.
 
 ## Legal
 

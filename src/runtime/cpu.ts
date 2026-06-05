@@ -304,7 +304,7 @@ export class CPU {
       case "DI": this.ime = false; this.imeScheduled = false; break;
       case "EI": this.imeScheduled = true; break;
       case "HALT": this.halted = true; break;
-      case "STOP": this.stopped = true; break;
+      case "STOP": { if (!(this.mmu as any).toggleCgbSpeedIfPrepared?.()) this.stopped = true; break; }
 
       case "ILLEGAL": /* lock up — treat as NOP for resilience */ break;
     }

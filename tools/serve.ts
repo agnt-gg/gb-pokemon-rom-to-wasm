@@ -8,8 +8,8 @@
  *
  * Multi-ROM endpoints for web/3d-library.html:
  *   GET /api/roms              -> supported local ROM catalog
- *   GET /api/wasm?id=red|blue|yellow|gold|silver  -> per-ROM recompiled wasm, compiled on demand and cached
- *   GET /api/rom?id=red|blue|yellow|gold|silver   -> per-ROM bytes
+ *   GET /api/wasm?id=red|blue|yellow|gold|silver|crystal  -> per-ROM recompiled wasm, compiled on demand and cached
+ *   GET /api/rom?id=red|blue|yellow|gold|silver|crystal   -> per-ROM bytes
  *   GET /api/rom-info?id=...   -> per-ROM manifest
  */
 
@@ -77,6 +77,15 @@ const ROM_CATALOG = [
     theme: "silver",
     status: "playable-candidate",
     notes: "New target; MBC3 + TIMER + RAM + Battery, DMG-compatible CGB-enhanced cart.",
+  },
+  {
+    id: "crystal",
+    label: "Pokemon Crystal",
+    version: "Crystal Version",
+    path: `${ROM_ROOT}\\Pokemon Crystal\\Pokemon Crystal.gbc`,
+    theme: "crystal",
+    status: "experimental-cgb",
+    notes: "CGB-only target; uses CGB VRAM/WRAM banking, palettes, HDMA, and MBC3 RTC.",
   },
 ] as const;
 

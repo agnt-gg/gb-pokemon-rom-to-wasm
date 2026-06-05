@@ -19,7 +19,7 @@
 <aside class="toc">
   <div class="brand"><div class="mark"></div><div><b>gb-recomp report</b><small>2026-06-05</small></div></div>
   <nav>
-    <a href="#abstract">00 · Abstract</a><a href="#multirom">00b · Multi-ROM</a><a href="#time">01 · Time + autonomy</a><a href="#significance">02 · Frontier significance</a><a href="#correction">03 · Terminology</a><a href="#pipeline">04 · Pipeline</a><a href="#decoder">05 · Decode + CFG</a><a href="#lifter">06 · Lifting</a><a href="#runtime">07 · Runtime</a><a href="#verification">08 · Verification surface</a><a href="#debugging">09 · Debugging traps</a><a href="#graphics">10 · Graphics</a><a href="#saveaudio">11 · Save + audio</a><a href="#frontend">12 · Frontend + 3D</a><a href="#results">13 · Results</a><a href="#postscript">14 · Timing postscript</a><a href="#limits">15 · Boundaries</a><a href="#lessons">15 · Lessons</a>
+    <a href="#abstract">00 · Abstract</a><a href="#multirom">00b · Multi-ROM</a><a href="#crystal">00c · Crystal/CGB</a><a href="#time">01 · Time + autonomy</a><a href="#significance">02 · Frontier significance</a><a href="#correction">03 · Terminology</a><a href="#pipeline">04 · Pipeline</a><a href="#decoder">05 · Decode + CFG</a><a href="#lifter">06 · Lifting</a><a href="#runtime">07 · Runtime</a><a href="#verification">08 · Verification surface</a><a href="#debugging">09 · Debugging traps</a><a href="#graphics">10 · Graphics</a><a href="#saveaudio">11 · Save + audio</a><a href="#frontend">12 · Frontend + 3D</a><a href="#results">13 · Results</a><a href="#postscript">14 · Timing postscript</a><a href="#limits">15 · Boundaries</a><a href="#lessons">15 · Lessons</a>
   </nav>
   <div class="side-note">Written as a lab notebook: the hangs, wrong guesses, and ugly seams are part of the result.</div>
 </aside>
@@ -28,7 +28,7 @@
   <div class="eyebrow"><span class="dot"></span> Scientific build note · local ROM · browser WASM</div>
   <h1><span class="grad">From Pokémon Red ROM bytes to playable WebAssembly</span></h1>
   <p class="dek">A candid, implementation-level writeup of how an AGNT AI agent navigated from raw Game Boy ROM bytes through machine-code decoding, static lifting, interpreter-oracle debugging, hardware-runtime reconstruction, browser audio/graphics/input, persistent saves, reusable skills, and polished 2D/3D product presentation.</p>
-  <div class="meta"><span class="pill"><b>Date</b> · 2026-06-05</span><span class="pill"><b>Targets</b> · Red / Blue / Yellow / Gold / Silver</span><span class="pill"><b>Output</b> · SM83 blocks → WASM</span><span class="pill"><b>Time</b> · ~3.75 hours</span><span class="pill"><b>Mode</b> · autonomous AGNT agent build</span><span class="pill"><b>Claim</b> · bits-to-product systems sprint</span><span class="pill"><b>Verification</b> · interpreter oracle + targeted tests</span><span class="pill"><b>Status</b> · multi-ROM 3D library + saves + sound</span></div>
+  <div class="meta"><span class="pill"><b>Date</b> · 2026-06-05</span><span class="pill"><b>Targets</b> · Red / Blue / Yellow / Gold / Silver / Crystal</span><span class="pill"><b>Output</b> · SM83 blocks → WASM</span><span class="pill"><b>Time</b> · ~3.75 hours</span><span class="pill"><b>Mode</b> · autonomous AGNT agent build</span><span class="pill"><b>Claim</b> · bits-to-product systems sprint</span><span class="pill"><b>Verification</b> · interpreter oracle + targeted tests</span><span class="pill"><b>Status</b> · multi-ROM 3D library + experimental CGB Crystal</span></div>
 </header>
 
 <section class="card" id="abstract">
@@ -36,6 +36,23 @@
   <p class="lead">This is not a conventional emulator UI, and it is not a source-code port. The system reads a real Game Boy ROM, decodes Sharp SM83 machine code, discovers reachable basic blocks, emits WebAssembly for those blocks, and supplies the missing Game Boy hardware in JavaScript: MMU, MBC3/MBC5 banking, MBC3 RTC behavior, PPU, OAM DMA, APU, timers, interrupts, joypad, SRAM, battery saves, and save-states.</p>
   <div class="flow"><div class="node"><strong>ROM</strong><span>.gb bytes</span></div><div class="node"><strong>MMU</strong><span>banks</span></div><div class="node"><strong>Decode</strong><span>SM83</span></div><div class="node"><strong>CFG</strong><span>blocks</span></div><div class="node"><strong>Lift</strong><span>WAT</span></div><div class="node"><strong>Assemble</strong><span>WASM</span></div><div class="node"><strong>Host</strong><span>V8</span></div><div class="node"><strong>Runtime</strong><span>PPU/APU</span></div><div class="node"><strong>Play</strong><span>browser</span></div></div>
   <div class="grid three"><div class="mini"><div class="stat">1698<small>basic blocks discovered</small></div></div><div class="mini"><div class="stat">7543<small>instructions in discovered graph</small></div></div><div class="mini"><div class="stat">127KB<small>generated WASM module</small></div></div></div>
+</section>
+
+
+<section class="card" id="crystal">
+  <div class="kicker">00c · Crystal / CGB implementation note</div><h2 class="title">Crystal forced the runtime across the DMG → CGB boundary.</h2>
+  <p class="lead">Pokémon Crystal is not just another mapper entry. Its header reports <code>0x0143 = 0xC0</code>, making it a CGB-only title. Supporting it required a first-class CGB mode rather than pretending the ROM was running on DMG hardware.</p>
+  <div class="table"><table><thead><tr><th>Feature</th><th>Register / area</th><th>Implemented behavior</th></tr></thead><tbody>
+    <tr><td>CGB boot identity</td><td><code>A=0x11</code>, CGB mode</td><td>Crystal is booted through the CGB path when the header flag is <code>0xC0</code>.</td></tr>
+    <tr><td>VRAM banking</td><td><code>FF4F / VBK</code></td><td>Two 8KB VRAM banks; BG/window attributes can select tile bank 0 or 1.</td></tr>
+    <tr><td>WRAM banking</td><td><code>FF70 / SVBK</code></td><td>Bank 0 fixed and banks 1-7 switchable for <code>D000-DFFF</code>.</td></tr>
+    <tr><td>CGB palettes</td><td><code>FF68-FF6B</code></td><td>64-byte BG and OBJ palette RAM with index/auto-increment behavior and 15-bit RGB decode.</td></tr>
+    <tr><td>Tile / sprite attributes</td><td>VRAM bank 1 tile map attrs, OAM attr bits</td><td>Palette, tile-bank, and flip attributes are consumed by the renderer.</td></tr>
+    <tr><td>HDMA path</td><td><code>FF51-FF55</code></td><td>General DMA copy plus HBlank block-copy path tied to PPU HBlank transitions.</td></tr>
+    <tr><td>KEY1 / STOP</td><td><code>FF4D</code>, <code>STOP</code></td><td>Speed-switch prepare/current-bit semantics are implemented to avoid freezing CGB startup paths.</td></tr>
+    <tr><td>State persistence</td><td>save-state schema</td><td>CGB mode, selected banks, palette RAM, HDMA registers/state, and KEY1 are serialized.</td></tr>
+  </tbody></table></div>
+  <p>The current Crystal support is intentionally marked <b>experimental</b>. The implementation is ready for browser testing and title/input smoke, but exact CGB priority rules, HDMA timing, and double-speed cycle accounting remain the next correctness frontier.</p>
 </section>
 
 <section class="card" id="time">
@@ -152,7 +169,7 @@ LDH ($FF), A</code></pre></div><div><h3>Conceptual WASM</h3><pre><code>(call $wb
     <tr><td>Static-vs-hybrid architecture</td><td class="good">Implemented</td><td>Fixed-bank code can run as lifted WASM; banked/unsafe regions route through live interpretation.</td></tr>
     <tr><td>Instruction validation</td><td class="good">Substantial targeted coverage</td><td>Decoder, ALU, CPU, branch, stack, register, and bug-regression tests.</td></tr>
     <tr><td>Hardware validation</td><td class="good">Subsystem probes</td><td>DMA/OAM, interrupts, LY/timing, HRAM/MMU, APU, save-system, and browser-frame tests.</td></tr>
-    <tr><td>ROM breadth</td><td class="warn">Future work</td><td>The result now spans Red, Blue, Yellow, Gold, and Silver across MBC3, MBC5, and minimal MBC3 RTC behavior. Broader GB/GBC compatibility still requires a larger ROM corpus and full CGB hardware support.</td></tr>
+    <tr><td>ROM breadth</td><td class="warn">Future work</td><td>The result now spans Red, Blue, Yellow, Gold, Silver, and Crystal across MBC3, MBC5, minimal MBC3 RTC behavior, and a partial CGB hardware path. Broader GB/GBC compatibility still requires a larger ROM corpus and full CGB hardware support.</td></tr>
     <tr><td>Bank-specialized recompilation</td><td class="warn">Future work</td><td>The current design uses interpreter fallback for banked/unsafe code. Specializing lifted blocks by mapper context is a clear next step.</td></tr>
     <tr><td>Independent reproduction</td><td class="warn">Packaging step</td><td>The repo, tests, reports, and local artifacts exist; publication should include a clean-checkout guide and independent verification pass.</td></tr>
   </tbody></table></div>
@@ -222,9 +239,10 @@ if (!inFixedRom) {
     <tr><td>Save-states</td><td class="good">Working</td><td>Manual slots + auto checkpoint.</td></tr>
     <tr><td>Sound</td><td class="good">Working</td><td>4-channel APU + AudioWorklet.</td></tr>
     <tr><td>3D presentation</td><td class="good">Working</td><td>Live game on 3D Game Boy screen.</td></tr>
-    <tr><td>Multi-ROM 3D library</td><td class="good">Working</td><td>Red, Blue, Yellow, Gold, and Silver exposed through <code>web/3d-library.html</code>.</td></tr>
+    <tr><td>Multi-ROM 3D library</td><td class="good">Working</td><td>Red, Blue, Yellow, Gold, Silver, and Crystal exposed through <code>web/3d-library.html</code>.</td></tr>
     <tr><td>MBC5 mapper</td><td class="good">Working</td><td>Required by Pokémon Yellow; lower/upper ROM bank bits and RAM-bank selection implemented.</td></tr>
-    <tr><td>MBC3 RTC</td><td class="good">Minimal support</td><td>Gold/Silver timer cart path: RTC register select, latch sequence, read/write/rebase behavior, and save-state serialization.</td></tr>
+    <tr><td>MBC3 RTC</td><td class="good">Minimal support</td><td>Gold/Silver/Crystal timer cart path: RTC register select, latch sequence, read/write/rebase behavior, and save-state serialization.</td></tr>
+    <tr><td>Partial CGB runtime</td><td class="warn">Experimental</td><td>Crystal path: CGB boot identity, VBK/SVBK, palette RAM, tile/sprite attributes, HDMA path, KEY1/STOP semantics, and CGB save-state fields.</td></tr>
     <tr><td>Save-state export/import</td><td class="good">Working</td><td>Occupied slots are visible; bundles can move states between <code>localhost:8080</code> and <code>localhost:8099</code>.</td></tr>
     <tr><td>Verification harness</td><td class="good">Substantial</td><td>Interpreter oracle, lockstep/divergence tests, decoder/ALU/CPU tests, DMA/APU/save tests, and runtime smoke checks.</td></tr>
   </tbody></table></div>

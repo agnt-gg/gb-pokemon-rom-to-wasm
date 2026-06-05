@@ -43,6 +43,10 @@ const THEMES: Record<string, GBTheme> = {
   grass:     { shell: 0x8b9d3a, shellDark: 0x6b7a2a, accent: 0x3a4416, btn: 0x4a5520, btnDark: 0x222a14, bezel: 0x0a0d06, screenTint: 0x9bbc0f, fog: 0x0d1109, rim1: 0x9bbc0f, rim2: 0xcfe34a },
   fire:      { shell: 0x2a1a12, shellDark: 0x1a0f08, accent: 0xff7a18, btn: 0xff7a18, btnDark: 0x140804, bezel: 0x0e0503, screenTint: 0xe0c14a, fog: 0x0e0503, rim1: 0xff7a18, rim2: 0xffd23b },
   water:     { shell: 0x2aa8ff, shellDark: 0x0d5fa8, accent: 0xb7f4ff, btn: 0x1b7dff, btnDark: 0x06254a, bezel: 0x06172b, screenTint: 0xb6e9ff, fog: 0x020814, rim1: 0x5dcfff, rim2: 0x1b7dff },
+  electric:  { shell: 0xffd642, shellDark: 0xb88b00, accent: 0xfff3a0, btn: 0x2a64ff, btnDark: 0x201408, bezel: 0x211600, screenTint: 0xf1ee91, fog: 0x100b00, rim1: 0xffd642, rim2: 0x2a64ff },
+  gold:      { shell: 0xd6a531, shellDark: 0x8a5d11, accent: 0xffe49a, btn: 0x4a2f12, btnDark: 0x201306, bezel: 0x1a1004, screenTint: 0xf0d76a, fog: 0x0c0702, rim1: 0xffd23b, rim2: 0xff8a18 },
+  silver:    { shell: 0xc8d2dc, shellDark: 0x7c8a99, accent: 0xdff7ff, btn: 0x556c82, btnDark: 0x17202a, bezel: 0x0a1018, screenTint: 0xd8eef2, fog: 0x060a10, rim1: 0xdff7ff, rim2: 0x8aa8ff },
+  crystal:   { shell: 0xa6f3ff, shellDark: 0x3a86b8, accent: 0xffffff, btn: 0x7d3de5, btnDark: 0x071927, bezel: 0x06111e, screenTint: 0xdffcff, fog: 0x020814, rim1: 0x12e0ff, rim2: 0xffffff },
 };
 // active palette (mutated by applyTheme); start with persisted choice or midnight
 const normalizeTheme = (t: string | null) => t === "dmg" ? "grass" : (t === "charizard" ? "fire" : (t || "midnight"));
@@ -99,6 +103,8 @@ async function boot() {
   ]);
   infoEl.innerHTML = '<b>' + (info.label || info.title) + '</b> <span>' + info.title + '</span> <span>' + info.mbc + '</span> <span>' + info.romSizeKB + 'KB</span>';
   document.querySelectorAll<HTMLElement>("[data-rom]").forEach((el) => el.setAttribute("aria-pressed", String(el.dataset.rom === activeRomId)));
+  const activeCatalogItem = (catalog.items || []).find((r: any) => r.id === activeRomId);
+  if (activeCatalogItem?.theme) localStorage.setItem("gb-theme", activeCatalogItem.theme);
   const machine = await BrowserMachine.create(new Uint8Array(wasm), new Uint8Array(rom));
 
   // ---- offscreen 2D canvas → becomes the GB screen texture ----
@@ -558,6 +564,10 @@ async function boot() {
       grass: { body: 0.68, well: 0.52 },
       fire: { body: 0.58, well: 0.42 },
       water: { body: 0.46, well: 0.34 },
+      electric: { body: 0.62, well: 0.46 },
+      gold: { body: 0.52, well: 0.38 },
+      silver: { body: 0.50, well: 0.36 },
+      crystal: { body: 0.36, well: 0.25 },
     };
     const glassy = shellOpacity[name];
     body.material.transparent = !!glassy;

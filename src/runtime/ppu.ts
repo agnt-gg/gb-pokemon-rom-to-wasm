@@ -132,6 +132,7 @@ export class PPU {
           this.modeClock -= DRAW_CYCLES;
           this.renderScanline(this.ly);
           this.setMode(0); // -> HBlank
+          (this.mmu as any).stepHdmaHblank?.();
         }
         break;
       case 0: // HBlank
@@ -167,9 +168,9 @@ export class PPU {
 
   // --- rendering -----------------------------------------------------------
 
-  private vram(addr: number): number {
+  private vram(addr: number, bank = 0): number {
     // addr is 0x8000-0x9FFF logical
-    return this.mmu.getVram()[addr - 0x8000] ?? 0;
+    return (this.mmu as any).readVram ? (this.mmu as any).readVram(addr, bank) : (this.mmu.getVram()[addr - 0x8000] ?? 0);
   }
 
   private shadeForColor(palette: number, colorId: number): [number, number, number] {
@@ -197,21 +198,23 @@ export class PPU {
         const sx = (x + this.scx) & 0xff;
         const tileCol = (sx >> 3) & 0x1f;
         const mapAddr = bgMapBase + tileRow * 32 + tileCol;
-        let tileIdx = this.vram(mapAddr);
+        let tileIdx = this.vram(mapAddr, 0);
+        const attr = this.mmu.isCgb() ? this.vram(mapAddr, 1) : 0;
         let tileAddr: number;
         if (signed) {
-          const s = tileIdx > 127 ? tileIdx - 256 : tileIdx;
-          tileAddr = tileDataBase + s * 16;
+          const ss = tileIdx > 127 ? tileIdx - 256 : tileIdx;
+          tileAddr = tileDataBase + ss * 16;
         } else {
           tileAddr = tileDataBase + tileIdx * 16;
         }
-        const py = y & 7;
-        const lo = this.vram(tileAddr + py * 2);
-        const hi = this.vram(tileAddr + py * 2 + 1);
-        const bit = 7 - (sx & 7);
+        let py = y & 7; if (attr & 0x40) py = 7 - py;
+        const tileBank = this.mmu.isCgb() ? ((attr >> 3) & 1) : 0;
+        const lo = this.vram(tileAddr + py * 2, tileBank);
+        const hi = this.vram(tileAddr + py * 2 + 1, tileBank);
+        const bit = (attr & 0x20) ? (sx & 7) : 7 - (sx & 7);
         const colorId = (((hi >> bit) & 1) << 1) | ((lo >> bit) & 1);
         bgColorIds[x] = colorId;
-        const [r, g, b] = this.shadeForColor(this.bgp, colorId);
+        const [r, g, b] = this.mmu.isCgb() ? this.mmu.getBgPaletteColor(attr & 7, colorId) : this.shadeForColor(this.bgp, colorId);
         const o = rowBase + x * 4;
         fb[o] = r; fb[o + 1] = g; fb[o + 2] = b; fb[o + 3] = 255;
       }
@@ -237,21 +240,23 @@ export class PPU {
           const wxp = x - wxAdj;
           const tileCol = (wxp >> 3) & 0x1f;
           const mapAddr = winMapBase + tileRow * 32 + tileCol;
-          const tileIdx = this.vram(mapAddr);
+          const tileIdx = this.vram(mapAddr, 0);
+          const attr = this.mmu.isCgb() ? this.vram(mapAddr, 1) : 0;
           let tileAddr: number;
           if (signed) {
-            const s = tileIdx > 127 ? tileIdx - 256 : tileIdx;
-            tileAddr = tileDataBase + s * 16;
+            const ss = tileIdx > 127 ? tileIdx - 256 : tileIdx;
+            tileAddr = tileDataBase + ss * 16;
           } else {
             tileAddr = tileDataBase + tileIdx * 16;
           }
-          const py = wy & 7;
-          const lo = this.vram(tileAddr + py * 2);
-          const hi = this.vram(tileAddr + py * 2 + 1);
-          const bit = 7 - (wxp & 7);
+          let py = wy & 7; if (attr & 0x40) py = 7 - py;
+          const tileBank = this.mmu.isCgb() ? ((attr >> 3) & 1) : 0;
+          const lo = this.vram(tileAddr + py * 2, tileBank);
+          const hi = this.vram(tileAddr + py * 2 + 1, tileBank);
+          const bit = (attr & 0x20) ? (wxp & 7) : 7 - (wxp & 7);
           const colorId = (((hi >> bit) & 1) << 1) | ((lo >> bit) & 1);
           bgColorIds[x] = colorId;
-          const [r, g, b] = this.shadeForColor(this.bgp, colorId);
+          const [r, g, b] = this.mmu.isCgb() ? this.mmu.getBgPaletteColor(attr & 7, colorId) : this.shadeForColor(this.bgp, colorId);
           const o = rowBase + x * 4;
           fb[o] = r; fb[o + 1] = g; fb[o + 2] = b; fb[o + 3] = 255;
           drew = true;
@@ -277,13 +282,15 @@ export class PPU {
         const flipY = (attr & 0x40) !== 0;
         const flipX = (attr & 0x20) !== 0;
         const palette = attr & 0x10 ? this.obp1 : this.obp0;
+        const objPalette = attr & 0x07;
+        const objBank = this.mmu.isCgb() ? ((attr >> 3) & 1) : 0;
         const behindBg = (attr & 0x80) !== 0;
         let row = line - sy;
         if (flipY) row = spriteH - 1 - row;
         if (tall) tile &= 0xfe; // 8x16 ignores low bit
         const tileAddr = 0x8000 + tile * 16 + row * 2;
-        const lo = this.vram(tileAddr);
-        const hi = this.vram(tileAddr + 1);
+        const lo = this.vram(tileAddr, objBank);
+        const hi = this.vram(tileAddr + 1, objBank);
         for (let px = 0; px < 8; px++) {
           const xx = sx + px;
           if (xx < 0 || xx >= SCREEN_W) continue;
@@ -291,7 +298,7 @@ export class PPU {
           const colorId = (((hi >> bit) & 1) << 1) | ((lo >> bit) & 1);
           if (colorId === 0) continue; // transparent
           if (behindBg && bgColorIds[xx] !== 0) continue; // BG priority
-          const [r, g, b] = this.shadeForColor(palette, colorId);
+          const [r, g, b] = this.mmu.isCgb() ? this.mmu.getObjPaletteColor(objPalette, colorId) : this.shadeForColor(palette, colorId);
           const o = rowBase + xx * 4;
           fb[o] = r; fb[o + 1] = g; fb[o + 2] = b; fb[o + 3] = 255;
         }
