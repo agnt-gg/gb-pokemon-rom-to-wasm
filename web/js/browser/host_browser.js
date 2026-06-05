@@ -34,10 +34,26 @@ export class BrowserMachine {
         this.joypad = new Joypad(mmu); // registers itself as the IO hook (FF00)
         this.apu = new APU(mmu);
         // Chain APU register IO (FF10-FF3F) in front of the joypad's hook so both coexist.
-        mmu.setIoHooks(apuIoHooks(this.apu, this.joypad));
+        const cgbHook = {
+            readIO: (addr) => this.mmu.readCgbIo(addr),
+            writeIO: (addr, value) => {
+                if ((addr >= 0xff51 && addr <= 0xff55) || [0xff4d, 0xff4f, 0xff68, 0xff69, 0xff6a, 0xff6b, 0xff70].includes(addr)) {
+                    this.mmu.handleCgbIoWrite(addr, value & 0xff);
+                    return true;
+                }
+                return false;
+            }
+        };
+        const chain = {
+            readIO: (addr) => { const v = this.joypad.readIO(addr); if (v !== null)
+                return v; return cgbHook.readIO(addr); },
+            writeIO: (addr, value) => this.joypad.writeIO(addr, value) || cgbHook.writeIO(addr, value),
+        };
+        mmu.setIoHooks(apuIoHooks(this.apu, chain));
     }
     static async create(wasmBytes, romBytes) {
-        const mmu = new MMU(romBytes);
+        const forceCgb = (romBytes[0x0143] ?? 0) === 0xc0;
+        const mmu = new MMU(romBytes, forceCgb ? "CGB" : "DMG");
         const m = new BrowserMachine(mmu);
         const memory = new WebAssembly.Memory({ initial: 2, maximum: 2 });
         let exportsRef = null;
@@ -100,19 +116,29 @@ export class BrowserMachine {
         m.exports = exportsRef;
         // PPU/timer/APU step in lockstep with cycles
         m.tickCb = (c) => { m.ppu.step(c); m.timer.step(c); m.apu.step(c); };
-        // Seed post-boot DMG state (skips needing the copyrighted boot ROM).
-        exportsRef.set_A(0x01);
-        exportsRef.set_F(0xb0);
-        exportsRef.set_B(0x00);
-        exportsRef.set_C(0x13);
+        // Seed post-boot state (skips needing the copyrighted boot ROM). Crystal is CGB-only,
+        // so it must see CGB identity registers rather than the DMG boot signature.
+        if (mmu.isCgb()) {
+            exportsRef.set_A(0x11);
+            exportsRef.set_F(0x80);
+            exportsRef.set_B(0x00);
+            exportsRef.set_C(0x00);
+        }
+        else {
+            exportsRef.set_A(0x01);
+            exportsRef.set_F(0xb0);
+            exportsRef.set_B(0x00);
+            exportsRef.set_C(0x13);
+        }
         exportsRef.set_D(0x00);
-        exportsRef.set_E(0xd8);
+        exportsRef.set_E(mmu.isCgb() ? 0x08 : 0xd8);
         exportsRef.set_H(0x01);
         exportsRef.set_L(0x4d);
         exportsRef.set_SP(0xfffe);
         exportsRef.set_PC(0x0100);
         const io = [
             [0xff40, 0x91], [0xff47, 0xfc], [0xff48, 0xff], [0xff49, 0xff], [0xff0f, 0x00], [0xffff, 0x00],
+            [0xff4d, mmu.isCgb() ? 0x80 : 0x7e], [0xff4f, 0xfe], [0xff55, 0xff], [0xff68, 0x00], [0xff6a, 0x00], [0xff70, 0xf9],
         ];
         for (const [a, v] of io)
             mmu.rawIoWrite(a, v);

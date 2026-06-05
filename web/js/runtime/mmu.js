@@ -25,12 +25,22 @@ export class MMU {
     romBankCount;
     mbc;
     // Memory regions
-    vram = new Uint8Array(0x2000);
-    wram = new Uint8Array(0x2000);
+    vram = new Uint8Array(0x4000); // CGB has two 8KB VRAM banks; DMG uses bank 0.
+    wram = new Uint8Array(0x8000); // CGB has bank0 fixed + banks 1-7 switchable; DMG uses first 8KB.
     oam = new Uint8Array(0xa0);
     hram = new Uint8Array(0x7f);
     io = new Uint8Array(0x80);
     ie = 0;
+    cgbMode;
+    vramBank = 0;
+    wramBank = 1;
+    key1 = 0x80; // bit7 current speed, bit0 prepare. We boot CGB targets as double-speed-capable identity.
+    bgPalette = new Uint8Array(64);
+    objPalette = new Uint8Array(64);
+    hdmaSrc = 0;
+    hdmaDst = 0;
+    hdmaRemaining = 0;
+    hdmaActive = false;
     // External cart RAM
     extRam;
     extRamEnabled = false;
@@ -46,12 +56,18 @@ export class MMU {
     rtcLatchedRegs = new Uint8Array(5);
     rtcRegs = new Uint8Array(5); // writable halted snapshot registers; index 0..4 maps 0x08..0x0c
     hooks = null;
-    constructor(rom) {
+    constructor(rom, mode) {
         this.rom = rom;
+        const cgbFlag = rom[0x0143] ?? 0;
+        this.cgbMode = mode ? mode === "CGB" : cgbFlag === 0xc0;
         this.romBankCount = Math.max(2, Math.floor(rom.length / 0x4000));
         this.mbc = MMU.detectMbc(rom);
         const ramSize = MMU.detectRamSize(rom);
         this.extRam = new Uint8Array(ramSize);
+        this.rawIoWrite(0xff4f, 0xfe);
+        this.rawIoWrite(0xff70, 0xf8 | this.wramBank);
+        this.rawIoWrite(0xff4d, this.key1);
+        this.rawIoWrite(0xff55, 0xff);
     }
     setIoHooks(h) {
         this.hooks = h;
@@ -102,7 +118,7 @@ export class MMU {
             return this.rom[off] ?? 0xff;
         }
         if (addr < 0xa000) {
-            return this.vram[addr - 0x8000];
+            return this.readVram(addr, this.vramBank);
         }
         if (addr < 0xc000) {
             if (!this.extRamEnabled)
@@ -117,11 +133,11 @@ export class MMU {
             return this.extRam[off % this.extRam.length] ?? 0xff;
         }
         if (addr < 0xe000) {
-            return this.wram[addr - 0xc000];
+            return this.readWram(addr);
         }
         if (addr < 0xfe00) {
             // Echo RAM
-            return this.wram[addr - 0xe000];
+            return this.readWram(addr - 0x2000);
         }
         if (addr < 0xfea0) {
             return this.oam[addr - 0xfe00];
@@ -156,7 +172,7 @@ export class MMU {
             return;
         }
         if (addr < 0xa000) {
-            this.vram[addr - 0x8000] = value;
+            this.writeVram(addr, value, this.vramBank);
             return;
         }
         if (addr < 0xc000) {
@@ -174,11 +190,11 @@ export class MMU {
             return;
         }
         if (addr < 0xe000) {
-            this.wram[addr - 0xc000] = value;
+            this.writeWram(addr, value);
             return;
         }
         if (addr < 0xfe00) {
-            this.wram[addr - 0xe000] = value; // echo
+            this.writeWram(addr - 0x2000, value); // echo
             return;
         }
         if (addr < 0xfea0) {
@@ -202,6 +218,7 @@ export class MMU {
                     this.oam[i] = this.read((src + i) & 0xffff);
                 }
             }
+            this.handleCgbIoWrite(addr, value);
             return;
         }
         if (addr < 0xffff) {
@@ -293,7 +310,129 @@ export class MMU {
     // -------------------------------------------------------------------------
     // Direct region access for the PPU / debugger / save system
     // -------------------------------------------------------------------------
+    readVram(addr, bank = 0) { return this.vram[((bank & 1) * 0x2000 + ((addr - 0x8000) & 0x1fff))] ?? 0xff; }
+    writeVram(addr, value, bank = 0) { this.vram[(bank & 1) * 0x2000 + ((addr - 0x8000) & 0x1fff)] = value & 0xff; }
+    readWram(addr) {
+        if (!this.cgbMode)
+            return this.wram[(addr - 0xc000) & 0x1fff] ?? 0xff;
+        if (addr < 0xd000)
+            return this.wram[addr - 0xc000] ?? 0xff;
+        return this.wram[this.wramBank * 0x1000 + (addr - 0xd000)] ?? 0xff;
+    }
+    writeWram(addr, value) {
+        if (!this.cgbMode) {
+            this.wram[(addr - 0xc000) & 0x1fff] = value & 0xff;
+            return;
+        }
+        if (addr < 0xd000)
+            this.wram[addr - 0xc000] = value & 0xff;
+        else
+            this.wram[this.wramBank * 0x1000 + (addr - 0xd000)] = value & 0xff;
+    }
     getVram() { return this.vram; }
+    isCgb() { return this.cgbMode; }
+    getVramBank() { return this.vramBank; }
+    getWramBank() { return this.wramBank; }
+    getBgPaletteColor(palette, color) { return this.decodeCgbColor(this.bgPalette, palette, color); }
+    getObjPaletteColor(palette, color) { return this.decodeCgbColor(this.objPalette, palette, color); }
+    decodeCgbColor(mem, palette, color) {
+        const i = ((palette & 7) * 8 + (color & 3) * 2) & 0x3f;
+        const v = (mem[i] ?? 0) | ((mem[(i + 1) & 0x3f] ?? 0) << 8);
+        const r5 = v & 0x1f, g5 = (v >> 5) & 0x1f, b5 = (v >> 10) & 0x1f;
+        return [(r5 * 255 / 31) | 0, (g5 * 255 / 31) | 0, (b5 * 255 / 31) | 0];
+    }
+    handleCgbIoWrite(addr, value) {
+        if (addr === 0xff4d) {
+            this.key1 = (this.key1 & 0x80) | (value & 0x01);
+            this.io[0x4d] = this.key1 | 0x7e;
+            return;
+        }
+        if (addr === 0xff4f) {
+            this.vramBank = this.cgbMode ? (value & 1) : 0;
+            this.io[0x4f] = 0xfe | this.vramBank;
+            return;
+        }
+        if (addr === 0xff70) {
+            this.wramBank = this.cgbMode ? (value & 7) || 1 : 1;
+            this.io[0x70] = 0xf8 | this.wramBank;
+            return;
+        }
+        if (addr === 0xff68 || addr === 0xff6a) {
+            this.io[addr - 0xff00] = value & 0xbf;
+            return;
+        }
+        if (addr === 0xff69) {
+            this.writePaletteByte(0xff68, this.bgPalette, value);
+            return;
+        }
+        if (addr === 0xff6b) {
+            this.writePaletteByte(0xff6a, this.objPalette, value);
+            return;
+        }
+        if (addr >= 0xff51 && addr <= 0xff55)
+            this.handleHdmaWrite(addr, value);
+    }
+    writePaletteByte(indexReg, mem, value) {
+        const ioIdx = indexReg - 0xff00;
+        let idx = this.io[ioIdx] & 0x3f;
+        mem[idx] = value & 0xff;
+        if (this.io[ioIdx] & 0x80)
+            this.io[ioIdx] = (this.io[ioIdx] & 0x80) | ((idx + 1) & 0x3f);
+    }
+    readCgbIo(addr) {
+        if (addr === 0xff4d)
+            return this.key1 | 0x7e;
+        if (addr === 0xff4f)
+            return 0xfe | this.vramBank;
+        if (addr === 0xff70)
+            return 0xf8 | this.wramBank;
+        if (addr === 0xff69)
+            return this.bgPalette[this.io[0x68] & 0x3f] ?? 0xff;
+        if (addr === 0xff6b)
+            return this.objPalette[this.io[0x6a] & 0x3f] ?? 0xff;
+        return null;
+    }
+    handleHdmaWrite(addr, value) {
+        if (addr === 0xff51)
+            this.hdmaSrc = (this.hdmaSrc & 0x00f0) | (value << 8);
+        else if (addr === 0xff52)
+            this.hdmaSrc = (this.hdmaSrc & 0xff00) | (value & 0xf0);
+        else if (addr === 0xff53)
+            this.hdmaDst = (this.hdmaDst & 0x00f0) | ((value & 0x1f) << 8);
+        else if (addr === 0xff54)
+            this.hdmaDst = (this.hdmaDst & 0xff00) | (value & 0xf0);
+        else if (addr === 0xff55) {
+            const blocks = (value & 0x7f) + 1;
+            this.hdmaRemaining = blocks;
+            if (value & 0x80) {
+                this.hdmaActive = true;
+                this.io[0x55] = (blocks - 1) & 0x7f;
+            }
+            else {
+                for (let i = 0; i < blocks; i++)
+                    this.hdmaCopyBlock();
+                this.hdmaActive = false;
+                this.io[0x55] = 0xff;
+            }
+        }
+    }
+    hdmaCopyBlock() {
+        const src = this.hdmaSrc & 0xfff0;
+        const dst = 0x8000 | (this.hdmaDst & 0x1ff0);
+        for (let i = 0; i < 0x10; i++)
+            this.writeVram(dst + i, this.read((src + i) & 0xffff), this.vramBank);
+        this.hdmaSrc = (this.hdmaSrc + 0x10) & 0xffff;
+        this.hdmaDst = (this.hdmaDst + 0x10) & 0x1ff0;
+        if (this.hdmaRemaining > 0)
+            this.hdmaRemaining--;
+        this.io[0x55] = this.hdmaRemaining ? ((this.hdmaRemaining - 1) & 0x7f) : 0xff;
+        if (!this.hdmaRemaining)
+            this.hdmaActive = false;
+    }
+    stepHdmaHblank() { if (this.hdmaActive && this.cgbMode)
+        this.hdmaCopyBlock(); }
+    toggleCgbSpeedIfPrepared() { if (!(this.key1 & 1))
+        return false; this.key1 = ((this.key1 ^ 0x80) & 0x80) | 0; this.io[0x4d] = this.key1 | 0x7e; return true; }
     getOam() { return this.oam; }
     getIoArray() { return this.io; }
     rawIoRead(addr) { return this.io[addr - 0xff00] ?? 0; }
@@ -364,6 +503,9 @@ export class MMU {
             rtcLatchLast: this.rtcLatchLast,
             rtcLatchedRegs: Array.from(this.rtcLatchedRegs),
             rtcRegs: Array.from(this.rtcRegs),
+            cgbMode: this.cgbMode, vramBank: this.vramBank, wramBank: this.wramBank, key1: this.key1,
+            hdma: { src: this.hdmaSrc, dst: this.hdmaDst, remaining: this.hdmaRemaining, active: this.hdmaActive },
+            bgPalette: Array.from(this.bgPalette), objPalette: Array.from(this.objPalette),
         };
     }
     /** Restore a previously serialized MMU state. */
@@ -389,6 +531,22 @@ export class MMU {
             this.rtcLatchedRegs.set(Uint8Array.from(s.rtcLatchedRegs).subarray(0, 5));
         if (s.rtcRegs)
             this.rtcRegs.set(Uint8Array.from(s.rtcRegs).subarray(0, 5));
+        if (s.vramBank !== undefined)
+            this.vramBank = s.vramBank & 1;
+        if (s.wramBank !== undefined)
+            this.wramBank = (s.wramBank & 7) || 1;
+        if (s.key1 !== undefined)
+            this.key1 = s.key1 & 0x81;
+        if (s.hdma) {
+            this.hdmaSrc = s.hdma.src ?? 0;
+            this.hdmaDst = s.hdma.dst ?? 0;
+            this.hdmaRemaining = s.hdma.remaining ?? 0;
+            this.hdmaActive = !!s.hdma.active;
+        }
+        if (s.bgPalette)
+            this.bgPalette.set(Uint8Array.from(s.bgPalette).subarray(0, 64));
+        if (s.objPalette)
+            this.objPalette.set(Uint8Array.from(s.objPalette).subarray(0, 64));
     }
     /** Header title. Old carts use 0x0134-0x0143; CGB-era carts shorten title to 0x0134-0x013E and use 0x013F-0x0142 as manufacturer code. */
     romTitle() {

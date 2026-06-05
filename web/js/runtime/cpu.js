@@ -533,9 +533,11 @@ export class CPU {
             case "HALT":
                 this.halted = true;
                 break;
-            case "STOP":
-                this.stopped = true;
+            case "STOP": {
+                if (!this.mmu.toggleCgbSpeedIfPrepared?.())
+                    this.stopped = true;
                 break;
+            }
             case "ILLEGAL": /* lock up — treat as NOP for resilience */ break;
         }
         // cycle accounting: taken conditional branches cost more
