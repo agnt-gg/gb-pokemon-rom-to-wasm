@@ -59,7 +59,7 @@ export class MMU {
   private key1 = 0x80; // bit7 current speed, bit0 prepare. We boot CGB targets as double-speed-capable identity.
   private bgPalette = new Uint8Array(64);
   private objPalette = new Uint8Array(64);
-  private hdmaSrc = 0; private hdmaDst = 0; private hdmaRemaining = 0; private hdmaActive = false;
+  private hdmaSrc = 0; private hdmaDst = 0; private hdmaRemaining = 0; private hdmaActive = false; private hdmaVramBank = 0;
 
   // External cart RAM
   private extRam: Uint8Array;
@@ -381,15 +381,25 @@ export class MMU {
     else if (addr === 0xff53) this.hdmaDst = (this.hdmaDst & 0x00f0) | ((value & 0x1f) << 8);
     else if (addr === 0xff54) this.hdmaDst = (this.hdmaDst & 0xff00) | (value & 0xf0);
     else if (addr === 0xff55) {
+      // If HBlank DMA is active, writing bit7=0 cancels it on CGB hardware; it does not start
+      // a new General DMA. This matters during Crystal transitions where the game can abort a
+      // pending transfer while switching maps/palettes.
+      if (this.hdmaActive && !(value & 0x80)) {
+        this.hdmaActive = false;
+        this.hdmaRemaining = 0;
+        this.io[0x55] = 0xff;
+        return;
+      }
       const blocks = (value & 0x7f) + 1;
       this.hdmaRemaining = blocks;
+      this.hdmaVramBank = this.vramBank;
       if (value & 0x80) { this.hdmaActive = true; this.io[0x55] = (blocks - 1) & 0x7f; }
       else { for (let i = 0; i < blocks; i++) this.hdmaCopyBlock(); this.hdmaActive = false; this.io[0x55] = 0xff; }
     }
   }
   private hdmaCopyBlock(): void {
     const src = this.hdmaSrc & 0xfff0; const dst = 0x8000 | (this.hdmaDst & 0x1ff0);
-    for (let i = 0; i < 0x10; i++) this.writeVram(dst + i, this.read((src + i) & 0xffff), this.vramBank);
+    for (let i = 0; i < 0x10; i++) this.writeVram(dst + i, this.read((src + i) & 0xffff), this.hdmaVramBank);
     this.hdmaSrc = (this.hdmaSrc + 0x10) & 0xffff; this.hdmaDst = (this.hdmaDst + 0x10) & 0x1ff0;
     if (this.hdmaRemaining > 0) this.hdmaRemaining--;
     this.io[0x55] = this.hdmaRemaining ? ((this.hdmaRemaining - 1) & 0x7f) : 0xff;
@@ -473,7 +483,7 @@ export class MMU {
       rtcLatchedRegs: Array.from(this.rtcLatchedRegs),
       rtcRegs: Array.from(this.rtcRegs),
       cgbMode: this.cgbMode, vramBank: this.vramBank, wramBank: this.wramBank, key1: this.key1,
-      hdma: { src: this.hdmaSrc, dst: this.hdmaDst, remaining: this.hdmaRemaining, active: this.hdmaActive },
+      hdma: { src: this.hdmaSrc, dst: this.hdmaDst, remaining: this.hdmaRemaining, active: this.hdmaActive, vramBank: this.hdmaVramBank },
       bgPalette: Array.from(this.bgPalette), objPalette: Array.from(this.objPalette),
     };
   }
@@ -492,7 +502,7 @@ export class MMU {
     if (s.vramBank !== undefined) this.vramBank = s.vramBank & 1;
     if (s.wramBank !== undefined) this.wramBank = (s.wramBank & 7) || 1;
     if (s.key1 !== undefined) this.key1 = s.key1 & 0x81;
-    if (s.hdma) { this.hdmaSrc = s.hdma.src ?? 0; this.hdmaDst = s.hdma.dst ?? 0; this.hdmaRemaining = s.hdma.remaining ?? 0; this.hdmaActive = !!s.hdma.active; }
+    if (s.hdma) { this.hdmaSrc = s.hdma.src ?? 0; this.hdmaDst = s.hdma.dst ?? 0; this.hdmaRemaining = s.hdma.remaining ?? 0; this.hdmaActive = !!s.hdma.active; this.hdmaVramBank = s.hdma.vramBank ?? 0; }
     if (s.bgPalette) this.bgPalette.set(Uint8Array.from(s.bgPalette).subarray(0, 64));
     if (s.objPalette) this.objPalette.set(Uint8Array.from(s.objPalette).subarray(0, 64));
   }

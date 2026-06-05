@@ -79,6 +79,10 @@
   .swatch.grass{--swatch:linear-gradient(135deg,#9bbc0f,#0d1109)}
   .swatch.fire{--swatch:linear-gradient(135deg,#ff7a18,#ffd23b)}
   .swatch.water{--swatch:radial-gradient(circle at 35% 30%,#d8fbff,#5dcfff 45%,#0b46a8 100%)}
+  .swatch.electric{--swatch:linear-gradient(135deg,#ffd642 55%,#2a64ff 55%)}
+  .swatch.gold{--swatch:linear-gradient(135deg,#ffe49a,#d6a531 45%,#8a5d11 100%)}
+  .swatch.silver{--swatch:linear-gradient(135deg,#eef4fa,#c8d2dc 45%,#7c8a99 100%)}
+  .swatch.crystal{--swatch:radial-gradient(circle at 35% 30%,#ffffff,#a6f3ff 45%,#3a86b8 100%)}
   @keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
   .library{position:fixed;left:24px;bottom:24px;z-index:13;width:min(520px,calc(100vw - 48px));display:grid;gap:8px;padding:10px;border:1px solid var(--border);border-radius:20px;background:rgba(10,10,18,.72);backdrop-filter:blur(18px);box-shadow:0 18px 64px rgba(0,0,0,.5)}
@@ -108,6 +112,10 @@
     <div class="swatch grass"    data-theme-set="grass"    title="Grass" aria-pressed="false"></div>
     <div class="swatch fire"     data-theme-set="fire"     title="Fire" aria-pressed="false"></div>
     <div class="swatch water"    data-theme-set="water"    title="Water" aria-pressed="false"></div>
+    <div class="swatch electric" data-theme-set="electric" title="Yellow / Electric" aria-pressed="false"></div>
+    <div class="swatch gold"     data-theme-set="gold"     title="Gold" aria-pressed="false"></div>
+    <div class="swatch silver"   data-theme-set="silver"   title="Silver" aria-pressed="false"></div>
+    <div class="swatch crystal"  data-theme-set="crystal"  title="Crystal" aria-pressed="false"></div>
   </div>
 
   <div class="topbar">
@@ -210,13 +218,28 @@
     // theme dial → calls the global the 3D module exposes, persists choice
     const swatches = document.querySelectorAll("[data-theme-set]");
     const normalizeTheme = (t) => t === "dmg" ? "grass" : (t === "charizard" ? "fire" : t);
-    const saved = normalizeTheme(localStorage.getItem("gb-theme")) || "midnight";
-    localStorage.setItem("gb-theme", saved);
     const sync = (t) => swatches.forEach((s) => s.setAttribute("aria-pressed", String(s.dataset.themeSet === t)));
-    sync(saved);
+    // The selected ROM has a default shell theme (Yellow=electric, Gold/Silver/Crystal match their
+    // cart colors). On first view of a ROM we prefer its own theme so switching games visibly
+    // recolors the 3D Game Boy; manual swatch clicks override and are remembered per session.
+    const activeRom = new URLSearchParams(location.search).get("rom") || localStorage.getItem("gb-3d-library-rom") || "red";
+    let bootTheme = normalizeTheme(localStorage.getItem("gb-theme")) || "midnight";
+    try {
+      const roms = await (await fetch("/api/roms")).json();
+      const item = (roms.items || []).find((r) => r.id === activeRom);
+      const lastRom = localStorage.getItem("gb-3d-theme-rom");
+      if (item && item.theme && lastRom !== activeRom) {
+        bootTheme = normalizeTheme(item.theme);
+        localStorage.setItem("gb-3d-theme-rom", activeRom);
+      }
+    } catch (e) { /* offline: keep saved theme */ }
+    localStorage.setItem("gb-theme", bootTheme);
+    sync(bootTheme);
+    if (window.__gbApplyTheme) window.__gbApplyTheme(bootTheme);
     swatches.forEach((s) => s.addEventListener("click", () => {
       const t = s.dataset.themeSet;
       if (window.__gbApplyTheme) window.__gbApplyTheme(t);
+      localStorage.setItem("gb-theme", t);
       sync(t);
     }));
   </script>

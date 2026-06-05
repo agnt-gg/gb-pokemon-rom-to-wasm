@@ -49,13 +49,14 @@ export class PPU {
 
   private modeClock = 0;
   private windowLine = 0;
+  private lcdWasOn = false;
 
   /** Snapshot PPU timing state for save-states (LCD regs live in MMU.io). */
-  serializeState(): { modeClock: number; windowLine: number } {
-    return { modeClock: this.modeClock, windowLine: this.windowLine };
+  serializeState(): { modeClock: number; windowLine: number; lcdWasOn?: boolean } {
+    return { modeClock: this.modeClock, windowLine: this.windowLine, lcdWasOn: this.lcdWasOn };
   }
-  loadState(s: { modeClock: number; windowLine: number }): void {
-    this.modeClock = s.modeClock; this.windowLine = s.windowLine;
+  loadState(s: { modeClock: number; windowLine: number; lcdWasOn?: boolean }): void {
+    this.modeClock = s.modeClock; this.windowLine = s.windowLine; this.lcdWasOn = !!s.lcdWasOn;
   }
 
   constructor(mmu: MMU) {
@@ -113,7 +114,23 @@ export class PPU {
     if (!(this.lcdc & 0x80)) {
       this.modeClock = 0;
       this.ly = 0;
+      this.windowLine = 0;
       this.stat = this.stat & ~0x03;
+      this.lcdWasOn = false;
+      return;
+    }
+
+    // LCD was just enabled. Start a fresh visible-frame pipeline instead of inheriting
+    // modeClock/mode bits from the disabled period. This is especially important for Crystal's
+    // CGB transitions, where enabling LCD mid-transition while HDMA/palette uploads are in flight
+    // can otherwise render the first scanlines from stale timing state.
+    if (!this.lcdWasOn) {
+      this.lcdWasOn = true;
+      this.modeClock = 0;
+      this.ly = 0;
+      this.windowLine = 0;
+      this.stat = (this.stat & ~0x03) | 0x02;
+      this.checkLyc();
       return;
     }
 

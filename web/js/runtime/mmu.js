@@ -41,6 +41,7 @@ export class MMU {
     hdmaDst = 0;
     hdmaRemaining = 0;
     hdmaActive = false;
+    hdmaVramBank = 0;
     // External cart RAM
     extRam;
     extRamEnabled = false;
@@ -402,8 +403,18 @@ export class MMU {
         else if (addr === 0xff54)
             this.hdmaDst = (this.hdmaDst & 0xff00) | (value & 0xf0);
         else if (addr === 0xff55) {
+            // If HBlank DMA is active, writing bit7=0 cancels it on CGB hardware; it does not start
+            // a new General DMA. This matters during Crystal transitions where the game can abort a
+            // pending transfer while switching maps/palettes.
+            if (this.hdmaActive && !(value & 0x80)) {
+                this.hdmaActive = false;
+                this.hdmaRemaining = 0;
+                this.io[0x55] = 0xff;
+                return;
+            }
             const blocks = (value & 0x7f) + 1;
             this.hdmaRemaining = blocks;
+            this.hdmaVramBank = this.vramBank;
             if (value & 0x80) {
                 this.hdmaActive = true;
                 this.io[0x55] = (blocks - 1) & 0x7f;
@@ -420,7 +431,7 @@ export class MMU {
         const src = this.hdmaSrc & 0xfff0;
         const dst = 0x8000 | (this.hdmaDst & 0x1ff0);
         for (let i = 0; i < 0x10; i++)
-            this.writeVram(dst + i, this.read((src + i) & 0xffff), this.vramBank);
+            this.writeVram(dst + i, this.read((src + i) & 0xffff), this.hdmaVramBank);
         this.hdmaSrc = (this.hdmaSrc + 0x10) & 0xffff;
         this.hdmaDst = (this.hdmaDst + 0x10) & 0x1ff0;
         if (this.hdmaRemaining > 0)
@@ -504,7 +515,7 @@ export class MMU {
             rtcLatchedRegs: Array.from(this.rtcLatchedRegs),
             rtcRegs: Array.from(this.rtcRegs),
             cgbMode: this.cgbMode, vramBank: this.vramBank, wramBank: this.wramBank, key1: this.key1,
-            hdma: { src: this.hdmaSrc, dst: this.hdmaDst, remaining: this.hdmaRemaining, active: this.hdmaActive },
+            hdma: { src: this.hdmaSrc, dst: this.hdmaDst, remaining: this.hdmaRemaining, active: this.hdmaActive, vramBank: this.hdmaVramBank },
             bgPalette: Array.from(this.bgPalette), objPalette: Array.from(this.objPalette),
         };
     }
@@ -542,6 +553,7 @@ export class MMU {
             this.hdmaDst = s.hdma.dst ?? 0;
             this.hdmaRemaining = s.hdma.remaining ?? 0;
             this.hdmaActive = !!s.hdma.active;
+            this.hdmaVramBank = s.hdma.vramBank ?? 0;
         }
         if (s.bgPalette)
             this.bgPalette.set(Uint8Array.from(s.bgPalette).subarray(0, 64));

@@ -31,14 +31,20 @@ const THEMES = {
 // active palette (mutated by applyTheme); start with persisted choice or midnight
 const normalizeTheme = (t) => t === "dmg" ? "grass" : (t === "charizard" ? "fire" : (t || "midnight"));
 let PAL = THEMES[normalizeTheme(localStorage.getItem("gb-theme"))] || THEMES.midnight;
-const SHELL = PAL.shell, SHELL_DARK = PAL.shellDark, ACCENT = PAL.accent;
-const BTN_RED = PAL.btn, BTN_DARK = PAL.btnDark, BEZEL = PAL.bezel, SCREEN_GREEN = PAL.screenTint;
+const SHELL = () => PAL.shell;
+const SHELL_DARK = () => PAL.shellDark;
+const ACCENT = () => PAL.accent;
+const BTN_RED = () => PAL.btn;
+const BTN_DARK = () => PAL.btnDark;
+const BEZEL = () => PAL.bezel;
+const SCREEN_GREEN = () => PAL.screenTint;
 async function boot() {
     const statusEl = document.getElementById("status");
     const fpsEl = document.getElementById("fps");
     const infoEl = document.getElementById("rominfo");
     const params = new URLSearchParams(location.search);
     let activeRomId = params.get("rom") || localStorage.getItem("gb-3d-library-rom") || "red";
+    let selectedThemeName = normalizeTheme(localStorage.getItem("gb-theme"));
     async function loadCatalog() {
         const res = await fetch("/api/roms");
         if (!res.ok)
@@ -61,6 +67,8 @@ async function boot() {
                 if (item.id === activeRomId)
                     return;
                 localStorage.setItem("gb-3d-library-rom", item.id);
+                if (item.theme)
+                    localStorage.setItem("gb-theme", normalizeTheme(item.theme));
                 location.href = "/web/3d-library.html?rom=" + encodeURIComponent(item.id);
             });
             shelf.appendChild(btn);
@@ -82,8 +90,11 @@ async function boot() {
     infoEl.innerHTML = '<b>' + (info.label || info.title) + '</b> <span>' + info.title + '</span> <span>' + info.mbc + '</span> <span>' + info.romSizeKB + 'KB</span>';
     document.querySelectorAll("[data-rom]").forEach((el) => el.setAttribute("aria-pressed", String(el.dataset.rom === activeRomId)));
     const activeCatalogItem = (catalog.items || []).find((r) => r.id === activeRomId);
-    if (activeCatalogItem?.theme)
-        localStorage.setItem("gb-theme", activeCatalogItem.theme);
+    if (activeCatalogItem?.theme) {
+        selectedThemeName = normalizeTheme(activeCatalogItem.theme);
+        localStorage.setItem("gb-theme", selectedThemeName);
+        document.documentElement.dataset.gbTheme = selectedThemeName;
+    }
     const machine = await BrowserMachine.create(new Uint8Array(wasm), new Uint8Array(rom));
     // ---- offscreen 2D canvas → becomes the GB screen texture ----
     const gbCanvas = document.createElement("canvas");
@@ -308,6 +319,7 @@ async function boot() {
     renderer.shadowMap.enabled = false;
     mount.appendChild(renderer.domElement);
     const scene = new THREE.Scene();
+    PAL = THEMES[selectedThemeName] || PAL;
     scene.fog = new THREE.FogExp2(PAL.fog, 0.035);
     const camera = new THREE.PerspectiveCamera(38, mount.clientWidth / mount.clientHeight, 0.1, 100);
     camera.position.set(0, 1.2, 9);
@@ -371,7 +383,7 @@ async function boot() {
     shape.quadraticCurveTo(-hw, hh, -hw, hh - br); // top-left round
     shape.lineTo(-hw, -hh + br); // left edge down
     shape.quadraticCurveTo(-hw, -hh, -hw + br, -hh); // bottom-left round
-    const body = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: bd, bevelEnabled: true, bevelThickness: 0.08, bevelSize: 0.08, bevelSegments: 3, curveSegments: 12 }), matte(SHELL));
+    const body = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: bd, bevelEnabled: true, bevelThickness: 0.08, bevelSize: 0.08, bevelSegments: 3, curveSegments: 12 }), matte(SHELL()));
     body.position.z = -bd / 2; // center the extrusion depth on z=0 like the old box
     body.castShadow = true;
     body.receiveShadow = true;
@@ -496,16 +508,16 @@ async function boot() {
     addBattery(0.10, -2.58);
     addBattery(0.10, -2.93);
     // subtle front recess (screen well)
-    const well = new THREE.Mesh(rounded(3.4, 3.0, 0.2, 0.18), matte(SHELL_DARK, 0.6));
+    const well = new THREE.Mesh(rounded(3.4, 3.0, 0.2, 0.18), matte(SHELL_DARK(), 0.6));
     well.position.set(0, 1.55, 0.5);
     gb.add(well);
     // bezel (dark)
-    const bezel = new THREE.Mesh(rounded(2.9, 2.5, 0.16, 0.1), matte(BEZEL, 0.5, 0.1));
+    const bezel = new THREE.Mesh(rounded(2.9, 2.5, 0.16, 0.1), matte(BEZEL(), 0.5, 0.1));
     bezel.position.set(0, 1.6, 0.6);
     bezel.castShadow = true;
     gb.add(bezel);
     // accent stripe under screen
-    const stripe = new THREE.Mesh(new THREE.BoxGeometry(2.9, 0.07, 0.02), matte(ACCENT, 0.5));
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(2.9, 0.07, 0.02), matte(ACCENT(), 0.5));
     stripe.position.set(0, 0.28, 0.62);
     gb.add(stripe);
     // "DOT MATRIX WITH STEREO SOUND" line + brand
@@ -522,7 +534,7 @@ async function boot() {
     screen.position.set(0, 1.66, 0.69);
     gb.add(screen);
     // faint glass glow
-    const glass = new THREE.Mesh(new THREE.PlaneGeometry(sw + 0.1, sh + 0.1), new THREE.MeshBasicMaterial({ color: SCREEN_GREEN, transparent: true, opacity: 0.06, blending: THREE.AdditiveBlending }));
+    const glass = new THREE.Mesh(new THREE.PlaneGeometry(sw + 0.1, sh + 0.1), new THREE.MeshBasicMaterial({ color: SCREEN_GREEN(), transparent: true, opacity: 0.06, blending: THREE.AdditiveBlending }));
     glass.position.set(0, 1.66, 0.71);
     gb.add(glass);
     // ===========================================================================
@@ -535,13 +547,13 @@ async function boot() {
         gb.add(mesh);
     }
     // D-Pad (cross of two rounded bars)
-    const dpadMat = matte(BTN_DARK, 0.55);
+    const dpadMat = matte(BTN_DARK(), 0.55);
     const dpadV = new THREE.Mesh(new THREE.BoxGeometry(0.40, 1.10, 0.24), dpadMat);
     const dpadH = new THREE.Mesh(new THREE.BoxGeometry(1.10, 0.40, 0.24), dpadMat);
     const dpadOrigin = new THREE.Vector3(-1.25, -1.15, 0.6);
     // up/down/left/right as 4 invisible hit pads over the cross arms
     const mkPad = (dx, dy, w, h, b) => {
-        const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.3), new THREE.MeshStandardMaterial({ color: BTN_DARK, roughness: 0.55, transparent: true, opacity: 0 }));
+        const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.3), new THREE.MeshStandardMaterial({ color: BTN_DARK(), roughness: 0.55, transparent: true, opacity: 0 }));
         m.position.set(dpadOrigin.x + dx, dpadOrigin.y + dy, dpadOrigin.z + 0.02);
         addPressable(m, b);
     };
@@ -555,7 +567,7 @@ async function boot() {
     mkPad(-0.45, 0, 0.45, 0.45, "left");
     mkPad(0.45, 0, 0.45, 0.45, "right");
     // A / B (red circular)
-    const btnMat = matte(BTN_RED, 0.45, 0.05);
+    const btnMat = matte(BTN_RED(), 0.45, 0.05);
     const mkRound = (x, y, b) => {
         const m = new THREE.Mesh(new THREE.CylinderGeometry(0.31, 0.31, 0.24, 32), btnMat);
         m.rotation.x = Math.PI / 2;
@@ -566,7 +578,7 @@ async function boot() {
     mkRound(0.7, -0.85, "b");
     mkRound(1.5, -0.55, "a");
     // Start / Select (small slanted pills)
-    const pillMat = matte(SHELL_DARK, 0.5);
+    const pillMat = matte(SHELL_DARK(), 0.5);
     const mkPill = (x, b) => {
         const m = new THREE.Mesh(new THREE.CapsuleGeometry(0.105, 0.39, 4, 12), pillMat);
         m.rotation.z = Math.PI / 2;
@@ -623,7 +635,7 @@ async function boot() {
         localStorage.setItem("gb-theme", name);
     }
     window.__gbApplyTheme = applyTheme;
-    applyTheme(localStorage.getItem("gb-theme") || "midnight");
+    applyTheme(selectedThemeName || localStorage.getItem("gb-theme") || "midnight");
     // ===========================================================================
     // INPUT — keyboard + raycast pointer on 3D buttons
     // ===========================================================================
