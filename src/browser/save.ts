@@ -101,18 +101,67 @@ export function listSaveStates(saveKey: string, slots: number): { slot: number; 
   return out;
 }
 
+export interface SaveStateBundle {
+  kind: "gb-recomp-save-states";
+  version: 1;
+  saveKey: string;
+  exportedAt: number;
+  slots: { slot: number; state: MachineState }[];
+}
+
+export function exportSaveStateBundle(saveKey: string, slots: number): SaveStateBundle {
+  const out: SaveStateBundle = { kind: "gb-recomp-save-states", version: 1, saveKey, exportedAt: Date.now(), slots: [] };
+  for (let i = 0; i < slots; i++) {
+    const state = readSaveState(saveKey, i);
+    if (state) out.slots.push({ slot: i, state });
+  }
+  return out;
+}
+
+export function importSaveStateBundle(saveKey: string, bundle: SaveStateBundle): number {
+  if (!bundle || bundle.kind !== "gb-recomp-save-states" || !Array.isArray(bundle.slots)) {
+    throw new Error("Not a gb-recomp save-state bundle");
+  }
+  let n = 0;
+  for (const row of bundle.slots) {
+    if (!row || typeof row.slot !== "number" || !row.state) continue;
+    writeSaveState(saveKey, row.slot, row.state);
+    n++;
+  }
+  return n;
+}
+
+export function downloadJson(filename: string, value: unknown): void {
+  const bytes = new TextEncoder().encode(JSON.stringify(value, null, 2));
+  downloadBytes(filename, bytes);
+}
+
 // ---------------------------------------------------------------------------
-// File import/export (download a .sav, or load one from disk).
+// File import/export (download a .sav, .json state bundle, or load one from disk).
 // ---------------------------------------------------------------------------
 export function downloadBytes(filename: string, data: Uint8Array): void {
-  // Copy into a fresh ArrayBuffer-backed view so it satisfies BlobPart under strict TS lib types.
+  // Copy into a fresh ArrayBuffer-backed view so it satisfies BlobPart under strict TS lib types
+  // and is detached from the live SRAM buffer.
   const buf = new Uint8Array(data.length);
   buf.set(data);
   const blob = new Blob([buf.buffer], { type: "application/octet-stream" });
   const url = URL.createObjectURL(blob);
+
+  // Some browsers are unreliable when clicking a detached <a>. Attach it for one tick, click,
+  // then clean it up. This is especially important for local dev pages and sandboxed surfaces.
   const a = document.createElement("a");
-  a.href = url; a.download = filename; a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  a.href = url;
+  a.download = filename;
+  a.rel = "noopener";
+  a.style.position = "fixed";
+  a.style.left = "-9999px";
+  a.style.top = "-9999px";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, 1000);
 }
 
 export function pickFile(accept: string): Promise<Uint8Array | null> {

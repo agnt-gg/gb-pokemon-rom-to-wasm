@@ -81,12 +81,25 @@
   .swatch.water{--swatch:radial-gradient(circle at 35% 30%,#d8fbff,#5dcfff 45%,#0b46a8 100%)}
   @keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  .library{position:fixed;left:24px;bottom:24px;z-index:13;width:min(520px,calc(100vw - 48px));display:grid;gap:8px;padding:10px;border:1px solid var(--border);border-radius:20px;background:rgba(10,10,18,.72);backdrop-filter:blur(18px);box-shadow:0 18px 64px rgba(0,0,0,.5)}
+  .library-title{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent2);padding:2px 6px 4px}
+  #romshelf{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .cartbtn{text-align:left;display:grid;gap:4px;border:1px solid var(--border);border-radius:14px;padding:12px 14px;cursor:pointer;color:var(--ink);background:linear-gradient(135deg,rgba(40,40,60,.72),rgba(18,18,28,.66));transition:.18s}
+  .cartbtn:hover{transform:translateY(-1px);border-color:var(--accent2)}
+  .cartbtn[aria-pressed="true"]{border-color:var(--accent2);box-shadow:0 0 0 1px rgba(18,224,255,.2),0 0 24px rgba(18,224,255,.18)}
+  .cartbtn:disabled{opacity:.45;cursor:not-allowed;transform:none}
+  .cart-title{font-weight:700;font-size:13px;letter-spacing:-.01em}.cart-meta{font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.45}
   @media (prefers-reduced-motion:reduce){*{animation:none!important}}
-  @media (max-width:640px){.hint{display:none}.topbar{max-width:60vw}}
+  @media (max-width:640px){.hint{display:none}.topbar{max-width:60vw}.library{left:12px;right:12px;bottom:86px;width:auto}#romshelf{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
   <div id="gl"></div>
+
+  <div class="library" aria-label="ROM Library">
+    <div class="library-title">Cartridge shelf / built ROMs</div>
+    <div id="romshelf"><button class="cartbtn" disabled><span class="cart-title">Scanning ROMs...</span><span class="cart-meta">waiting for /api/roms</span></button></div>
+  </div>
 
   <div class="themebar" role="group" aria-label="Theme">
     <div class="swatch midnight" data-theme-set="midnight" title="Original" aria-pressed="true"></div>
@@ -181,7 +194,7 @@
     window.OrbitControls = OrbitControls;
     window.RoundedBoxGeometry = RoundedBoxGeometry;
     // load the compiled emulator-3D bridge AFTER globals are set
-    await import("/web/js/browser/gb3d.js");
+    await import("/web/js/browser/gb3d_multi.js");
 
     // collapsible settings drawer
     const toggle = document.getElementById("settings-toggle");

@@ -21,7 +21,7 @@
  *   0xFFFF         IE (interrupt enable)
  */
 
-export type MbcKind = "NONE" | "MBC1" | "MBC3";
+export type MbcKind = "NONE" | "MBC1" | "MBC3" | "MBC5";
 
 export interface IoHooks {
   /** Called for reads in 0xFF00-0xFF7F. Return the byte, or null to fall through to raw IO array. */
@@ -35,6 +35,7 @@ export interface MmuState {
   vram: number[]; wram: number[]; oam: number[]; hram: number[]; io: number[];
   ie: number; extRam: number[];
   romBank: number; ramBank: number; bankingMode: number; extRamEnabled: boolean;
+  rtcBaseUnixMs?: number; rtcLatched?: boolean; rtcLatchLast?: number; rtcLatchedRegs?: number[]; rtcRegs?: number[];
 }
 
 export class MMU {
@@ -59,6 +60,14 @@ export class MMU {
   private ramBank = 0;
   private bankingMode = 0; // MBC1 mode select
 
+  // MBC3 real-time clock state. Gold/Silver use cart type 0x10 (MBC3+TIMER+RAM+BATTERY).
+  // We keep a simple wall-clock-backed RTC and implement register select + latch semantics.
+  private rtcBaseUnixMs = Date.now();
+  private rtcLatched = false;
+  private rtcLatchLast = 0xff;
+  private rtcLatchedRegs = new Uint8Array(5);
+  private rtcRegs = new Uint8Array(5); // writable halted snapshot registers; index 0..4 maps 0x08..0x0c
+
   private hooks: IoHooks | null = null;
 
   constructor(rom: Uint8Array) {
@@ -79,7 +88,9 @@ export class MMU {
     if (t === 0x00 || t === 0x08 || t === 0x09) return "NONE";
     if (t >= 0x01 && t <= 0x03) return "MBC1";
     if (t >= 0x0f && t <= 0x13) return "MBC3";
-    // pokered is MBC3 (0x13: MBC3+RAM+BATTERY). Default to MBC3 for safety on Pokemon carts.
+    if (t >= 0x19 && t <= 0x1e) return "MBC5";
+    // pokered/pokeblue are MBC3. Unknown Pokemon-era carts are more likely banked than ROM-only,
+    // so default to MBC3 for backwards compatibility with the original Red target.
     return "MBC3";
   }
 
@@ -120,8 +131,13 @@ export class MMU {
       return this.vram[addr - 0x8000]!;
     }
     if (addr < 0xc000) {
-      if (!this.extRamEnabled || this.extRam.length === 0) return 0xff;
-      const off = this.ramBank * 0x2000 + (addr - 0xa000);
+      if (!this.extRamEnabled) return 0xff;
+      if (this.mbc === "MBC3" && this.ramBank >= 0x08 && this.ramBank <= 0x0c) {
+        return this.readRtcReg(this.ramBank);
+      }
+      if (this.extRam.length === 0) return 0xff;
+      const bank = this.ramBank & 0x03;
+      const off = bank * 0x2000 + (addr - 0xa000);
       return this.extRam[off % this.extRam.length] ?? 0xff;
     }
     if (addr < 0xe000) {
@@ -170,9 +186,16 @@ export class MMU {
       return;
     }
     if (addr < 0xc000) {
-      if (this.extRamEnabled && this.extRam.length > 0) {
-        const off = this.ramBank * 0x2000 + (addr - 0xa000);
-        this.extRam[off % this.extRam.length] = value;
+      if (this.extRamEnabled) {
+        if (this.mbc === "MBC3" && this.ramBank >= 0x08 && this.ramBank <= 0x0c) {
+          this.writeRtcReg(this.ramBank, value);
+          return;
+        }
+        if (this.extRam.length > 0) {
+          const bank = this.mbc === "MBC3" ? (this.ramBank & 0x03) : this.ramBank;
+          const off = bank * 0x2000 + (addr - 0xa000);
+          this.extRam[off % this.extRam.length] = value;
+        }
       }
       return;
     }
@@ -222,6 +245,24 @@ export class MMU {
   // MBC register writes (the bank-switching logic)
   // -------------------------------------------------------------------------
   private mbcWrite(addr: number, value: number): void {
+    if (this.mbc === "MBC5") {
+      if (addr < 0x2000) {
+        // RAM enable (0x0A in low nibble), same external RAM gate convention as MBC1/MBC3.
+        this.extRamEnabled = (value & 0x0f) === 0x0a;
+      } else if (addr < 0x3000) {
+        // MBC5 ROM bank lower 8 bits. Unlike MBC1/MBC3, bank 0 is valid in the switchable window.
+        this.romBank = (this.romBank & 0x100) | value;
+      } else if (addr < 0x4000) {
+        // MBC5 ROM bank bit 8. Yellow is 1 MiB (64 banks), but keep the full 9-bit behavior.
+        this.romBank = (this.romBank & 0x0ff) | ((value & 0x01) << 8);
+      } else if (addr < 0x6000) {
+        // RAM bank select. Non-rumble MBC5 carts expose up to 16 RAM banks.
+        this.ramBank = value & 0x0f;
+      }
+      this.romBank %= this.romBankCount;
+      return;
+    }
+
     if (this.mbc === "MBC3") {
       if (addr < 0x2000) {
         // RAM + timer enable (0x0A in low nibble)
@@ -232,10 +273,14 @@ export class MMU {
         if (b === 0) b = 1;
         this.romBank = b;
       } else if (addr < 0x6000) {
-        // RAM bank number (0-3) or RTC register select (0x08-0x0C)
+        // RAM bank number (0-3) or RTC register select (0x08-0x0C).
         this.ramBank = value & 0x0f;
+      } else {
+        // RTC latch sequence: write 0 then 1 to 0x6000-0x7FFF.
+        const v = value & 0x01;
+        if (this.rtcLatchLast === 0 && v === 1) this.latchRtc();
+        this.rtcLatchLast = v;
       }
-      // 0x6000-0x7FFF: latch clock data (RTC) — ignored for base pokered
       return;
     }
 
@@ -274,6 +319,47 @@ export class MMU {
   getExtRam(): Uint8Array { return this.extRam; }
   loadExtRam(data: Uint8Array): void { this.extRam.set(data.subarray(0, this.extRam.length)); }
 
+  private currentRtcRegs(): Uint8Array {
+    const out = new Uint8Array(5);
+    const control = this.rtcRegs[4] ?? 0;
+    if (control & 0x40) { // halted: expose the writable frozen values
+      out.set(this.rtcRegs);
+      return out;
+    }
+    let seconds = Math.max(0, Math.floor((Date.now() - this.rtcBaseUnixMs) / 1000));
+    const days = Math.floor(seconds / 86400);
+    seconds %= 86400;
+    out[0] = seconds % 60;
+    out[1] = Math.floor(seconds / 60) % 60;
+    out[2] = Math.floor(seconds / 3600) % 24;
+    out[3] = days & 0xff;
+    out[4] = (control & 0x40) | ((days >> 8) & 0x01) | (days > 511 ? 0x80 : 0x00);
+    return out;
+  }
+
+  private latchRtc(): void {
+    this.rtcLatchedRegs.set(this.currentRtcRegs());
+    this.rtcLatched = true;
+  }
+
+  private readRtcReg(sel: number): number {
+    const idx = sel - 0x08;
+    const regs = this.rtcLatched ? this.rtcLatchedRegs : this.currentRtcRegs();
+    return regs[idx] ?? 0xff;
+  }
+
+  private writeRtcReg(sel: number, value: number): void {
+    const idx = sel - 0x08;
+    if (idx < 0 || idx > 4) return;
+    const regs = this.currentRtcRegs();
+    regs[idx] = value & 0xff;
+    // Rebase the wall clock so the written h/m/s/day values become the new current time.
+    const days = (regs[3] | ((regs[4] & 0x01) << 8)) & 0x1ff;
+    const seconds = days * 86400 + (regs[2] % 24) * 3600 + (regs[1] % 60) * 60 + (regs[0] % 60);
+    this.rtcBaseUnixMs = Date.now() - seconds * 1000;
+    this.rtcRegs.set(regs);
+  }
+
   /** True if the cartridge has battery-backed save RAM (so saving is meaningful). */
   hasBattery(): boolean {
     const type = this.rom[0x0147] ?? 0;
@@ -296,6 +382,11 @@ export class MMU {
       ramBank: this.ramBank,
       bankingMode: this.bankingMode,
       extRamEnabled: this.extRamEnabled,
+      rtcBaseUnixMs: this.rtcBaseUnixMs,
+      rtcLatched: this.rtcLatched,
+      rtcLatchLast: this.rtcLatchLast,
+      rtcLatchedRegs: Array.from(this.rtcLatchedRegs),
+      rtcRegs: Array.from(this.rtcRegs),
     };
   }
   /** Restore a previously serialized MMU state. */
@@ -305,15 +396,23 @@ export class MMU {
     this.extRam.set(Uint8Array.from(s.extRam).subarray(0, this.extRam.length));
     this.romBank = s.romBank; this.ramBank = s.ramBank;
     this.bankingMode = s.bankingMode; this.extRamEnabled = s.extRamEnabled;
+    if (s.rtcBaseUnixMs !== undefined) this.rtcBaseUnixMs = s.rtcBaseUnixMs;
+    if (s.rtcLatched !== undefined) this.rtcLatched = s.rtcLatched;
+    if (s.rtcLatchLast !== undefined) this.rtcLatchLast = s.rtcLatchLast;
+    if (s.rtcLatchedRegs) this.rtcLatchedRegs.set(Uint8Array.from(s.rtcLatchedRegs).subarray(0, 5));
+    if (s.rtcRegs) this.rtcRegs.set(Uint8Array.from(s.rtcRegs).subarray(0, 5));
   }
 
-  /** Header title (0x0134-0x0143), trimmed. */
+  /** Header title. Old carts use 0x0134-0x0143; CGB-era carts shorten title to 0x0134-0x013E and use 0x013F-0x0142 as manufacturer code. */
   romTitle(): string {
     let s = "";
-    for (let i = 0x0134; i <= 0x0143; i++) {
+    const cgb = this.rom[0x0143] ?? 0;
+    const end = (cgb === 0x80 || cgb === 0xc0) ? 0x013e : 0x0143;
+    for (let i = 0x0134; i <= end; i++) {
       const c = this.rom[i] ?? 0;
       if (c === 0) break;
-      s += String.fromCharCode(c);
+      // Keep printable ASCII title bytes only; avoids manufacturer/CGB flag artifacts in save keys.
+      if (c >= 0x20 && c <= 0x7e) s += String.fromCharCode(c);
     }
     return s.trim();
   }

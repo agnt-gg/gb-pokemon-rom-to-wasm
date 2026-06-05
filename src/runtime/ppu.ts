@@ -104,10 +104,16 @@ export class PPU {
   /** Advance the PPU by `cycles` t-cycles, driven from the machine's frame loop. */
   step(cycles: number): void {
     // LCD off? hold LY=0, mode 0.
+    // Important: do NOT call setMode(0) here. setMode() raises STAT interrupts when the
+    // corresponding mode interrupt source bit is enabled. On real hardware, disabling the LCD
+    // does not create an endless stream of fresh HBlank STAT interrupts every CPU tick. Yellow's
+    // attract/title transition temporarily disables LCD while STAT bit 3 can remain set; raising
+    // a synthetic interrupt here traps the CPU in the 0x48 STAT vector forever with LCDC bit 7
+    // off. Just force the mode bits to 0 silently while LCD is disabled.
     if (!(this.lcdc & 0x80)) {
       this.modeClock = 0;
       this.ly = 0;
-      this.setMode(0);
+      this.stat = this.stat & ~0x03;
       return;
     }
 

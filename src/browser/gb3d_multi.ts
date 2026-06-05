@@ -55,14 +55,50 @@ async function boot() {
   const fpsEl = document.getElementById("fps")!;
   const infoEl = document.getElementById("rominfo")!;
 
-  // ---- fetch + build the machine (identical to main.ts) ----
-  statusEl.textContent = "fetching recompiled wasm…";
+  const params = new URLSearchParams(location.search);
+  let activeRomId = params.get("rom") || localStorage.getItem("gb-3d-library-rom") || "red";
+
+  async function loadCatalog() {
+    const res = await fetch("/api/roms");
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  }
+
+  function renderRomPicker(catalog: any) {
+    const shelf = document.getElementById("romshelf");
+    if (!shelf) return;
+    shelf.innerHTML = "";
+    for (const item of catalog.items || []) {
+      const btn = document.createElement("button");
+      btn.className = "cartbtn";
+      btn.dataset.rom = item.id;
+      btn.setAttribute("aria-pressed", String(item.id === activeRomId));
+      btn.disabled = !item.exists;
+      btn.innerHTML = '<span class="cart-title">' + item.label + '</span><span class="cart-meta">' + (item.title || 'missing') + ' / ' + (item.mbc || '?') + ' / ' + (item.romSizeKB || '?') + 'KB</span>';
+      btn.addEventListener("click", () => {
+        if (item.id === activeRomId) return;
+        localStorage.setItem("gb-3d-library-rom", item.id);
+        location.href = "/web/3d-library.html?rom=" + encodeURIComponent(item.id);
+      });
+      shelf.appendChild(btn);
+    }
+  }
+
+  statusEl.textContent = "reading ROM catalog";
+  const catalog = await loadCatalog();
+  const knownIds = new Set((catalog.items || []).map((r: any) => r.id));
+  if (!knownIds.has(activeRomId)) activeRomId = catalog.defaultId || "red";
+  renderRomPicker(catalog);
+
+  const qs = "?id=" + encodeURIComponent(activeRomId);
+  statusEl.textContent = "building " + activeRomId + " wasm";
   const [info, wasm, rom] = await Promise.all([
-    fetch("/api/rom-info").then((r) => r.json()),
-    fetch("/api/wasm").then((r) => r.arrayBuffer()),
-    fetch("/api/rom").then((r) => r.arrayBuffer()),
+    fetch("/api/rom-info" + qs).then((r) => r.json()),
+    fetch("/api/wasm" + qs).then((r) => r.arrayBuffer()),
+    fetch("/api/rom" + qs).then((r) => r.arrayBuffer()),
   ]);
-  infoEl.innerHTML = `<b>${info.title}</b> · ${info.mbc} · ${info.romSizeKB}KB`;
+  infoEl.innerHTML = '<b>' + (info.label || info.title) + '</b> <span>' + info.title + '</span> <span>' + info.mbc + '</span> <span>' + info.romSizeKB + 'KB</span>';
+  document.querySelectorAll<HTMLElement>("[data-rom]").forEach((el) => el.setAttribute("aria-pressed", String(el.dataset.rom === activeRomId)));
   const machine = await BrowserMachine.create(new Uint8Array(wasm), new Uint8Array(rom));
 
   // ---- offscreen 2D canvas → becomes the GB screen texture ----
